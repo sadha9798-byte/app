@@ -25,6 +25,7 @@ import {
 } from 'recharts';
 
 const COLORS = ['#22c55e','#f59e0b','#3b82f6','#8b5cf6','#ef4444','#06b6d4'];
+const LOGO_URL = 'https://customer-assets.emergentagent.com/job_venue-management-pro-2/artifacts/4h78znjp_athletixcel-0NRPYaoJM4U16J44.avif';
 const SPORT_COLOR = { Football: '#22c55e', Cricket: '#f59e0b', Volleyball: '#3b82f6', Coaching: '#8b5cf6' };
 const STATUS_COLOR = {
   Confirmed: 'bg-red-500/15 text-red-600 border-red-500/30',
@@ -76,7 +77,7 @@ function LoginPage({ onLogin }) {
       <div className="grid lg:grid-cols-2 gap-8 max-w-5xl w-full items-center">
         <div className="hidden lg:block">
           <div className="flex items-center gap-3 mb-6">
-            <div className="size-12 rounded-xl bg-emerald-600 text-white grid place-items-center font-bold text-2xl shadow-lg shadow-emerald-200">N</div>
+            <img src={LOGO_URL} alt="Athletixcel" className="size-14 rounded-xl bg-white p-1 shadow-lg shadow-emerald-200 object-contain" />
             <div>
               <h1 className="text-3xl font-bold tracking-tight">NexTurf <span className="text-emerald-600">ERP</span></h1>
               <p className="text-sm text-muted-foreground">by Athletixcel Sports Pvt Ltd</p>
@@ -95,7 +96,7 @@ function LoginPage({ onLogin }) {
         <Card className="shadow-2xl border-emerald-100">
           <CardHeader>
             <div className="lg:hidden flex items-center gap-2 mb-2">
-              <div className="size-10 rounded-lg bg-emerald-600 text-white grid place-items-center font-bold">N</div>
+              <img src={LOGO_URL} alt="Athletixcel" className="size-10 rounded-lg bg-white p-0.5 border object-contain" />
               <span className="font-bold text-xl">NexTurf ERP</span>
             </div>
             <CardTitle className="text-2xl">Sign in</CardTitle>
@@ -616,14 +617,15 @@ function InvoiceView({ invoice, company, payments, onClose }) {
         <div id="invoice-print" className="bg-white p-6 print:p-0">
           <div className="flex items-start justify-between border-b pb-4 mb-4">
             <div>
-              <div className="flex items-center gap-2 mb-2">
-                <div className="size-10 rounded-lg bg-emerald-600 text-white grid place-items-center font-bold">N</div>
+              <div className="flex items-center gap-3 mb-2">
+                <img src={company?.logoUrl || LOGO_URL} alt="logo" className="size-14 rounded-lg bg-white p-0.5 border object-contain" />
                 <div>
                   <h1 className="text-xl font-bold">{company?.name}</h1>
-                  <p className="text-xs text-muted-foreground">{company?.address}</p>
+                  <p className="text-[11px] text-muted-foreground max-w-[320px] leading-snug">{company?.turfAddress || company?.address}</p>
                 </div>
               </div>
-              <p className="text-xs">GSTIN: <span className="font-mono">{company?.gstNumber}</span> · {company?.phone}</p>
+              <p className="text-xs">GSTIN: <span className="font-mono">{company?.gstNumber}</span></p>
+              <p className="text-xs">{company?.phone} · {company?.email}</p>
             </div>
             <div className="text-right">
               <h2 className="text-2xl font-bold text-emerald-700">{invoice.isGst ? 'TAX INVOICE' : 'INVOICE'}</h2>
@@ -672,7 +674,12 @@ function InvoiceView({ invoice, company, payments, onClose }) {
               <div className="flex justify-between text-rose-700 font-bold"><span>Balance Due</span><span>{fmtINR(invoice.balance)}</span></div>
             </div>
           </div>
-          <p className="text-[11px] text-muted-foreground mt-6 border-t pt-2 text-center">Thank you for choosing {company?.brand}. This is a computer-generated invoice.</p>
+          <p className="text-[11px] text-muted-foreground mt-6 border-t pt-3 text-center leading-relaxed">
+            <span className="block">Thank you for choosing <span className="font-semibold text-emerald-700">{company?.brand || 'NexTurf'}</span> — by {company?.name}.</span>
+            <span className="block mt-1">📞 Bookings {company?.phones?.bookings} · Support {company?.phones?.support} · ✉ {company?.emails?.bookings}</span>
+            <span className="block mt-0.5">{company?.registeredAddress}</span>
+            <span className="block mt-1 italic">This is a computer-generated invoice and does not require a signature.</span>
+          </p>
         </div>
         <DialogFooter className="print:hidden">
           <Button variant="outline" onClick={printInvoice}><Printer className="size-4 mr-1"/>Print / Save PDF</Button>
@@ -969,19 +976,51 @@ function SettingsPage({ user }) {
     <div className="space-y-4">
       <div><h1 className="text-2xl font-bold">Settings</h1><p className="text-sm text-muted-foreground">Company information, GST, invoicing & security.</p></div>
       <Tabs defaultValue="company">
-        <TabsList><TabsTrigger value="company">Company</TabsTrigger><TabsTrigger value="invoice">Invoice</TabsTrigger><TabsTrigger value="security">Security</TabsTrigger><TabsTrigger value="integrations">Integrations</TabsTrigger></TabsList>
+        <TabsList><TabsTrigger value="company">Company</TabsTrigger><TabsTrigger value="contacts">Contacts</TabsTrigger><TabsTrigger value="invoice">Invoice</TabsTrigger><TabsTrigger value="security">Security</TabsTrigger><TabsTrigger value="integrations">Integrations</TabsTrigger></TabsList>
         <TabsContent value="company">
           <Card><CardContent className="p-6 space-y-3">
             <div className="grid md:grid-cols-2 gap-3">
               <div><Label>Brand Name</Label><Input value={s.brand||''} onChange={e => setS({...s, brand:e.target.value})} /></div>
               <div><Label>Registered Name</Label><Input value={s.name||''} onChange={e => setS({...s, name:e.target.value})} /></div>
               <div><Label>GSTIN</Label><Input value={s.gstNumber||''} onChange={e => setS({...s, gstNumber:e.target.value})} /></div>
-              <div><Label>Phone</Label><Input value={s.phone||''} onChange={e => setS({...s, phone:e.target.value})} /></div>
-              <div><Label>Email</Label><Input value={s.email||''} onChange={e => setS({...s, email:e.target.value})} /></div>
               <div><Label>GST Rate %</Label><Input type="number" value={s.gstRate||18} onChange={e => setS({...s, gstRate:Number(e.target.value)})} /></div>
+              <div><Label>Logo URL</Label><Input value={s.logoUrl||''} onChange={e => setS({...s, logoUrl:e.target.value})} /></div>
+              <div className="flex items-end"><img src={s.logoUrl || LOGO_URL} alt="logo" className="size-12 rounded-lg border bg-white p-1 object-contain" /></div>
             </div>
-            <div><Label>Address</Label><Textarea value={s.address||''} onChange={e => setS({...s, address:e.target.value})} /></div>
-            <Button onClick={save} className="bg-emerald-600 hover:bg-emerald-700">Save</Button>
+            <div><Label>Registered Address</Label><Textarea rows={2} value={s.registeredAddress||''} onChange={e => setS({...s, registeredAddress:e.target.value})} /></div>
+            <div><Label>Turf Address</Label><Textarea rows={2} value={s.turfAddress||''} onChange={e => setS({...s, turfAddress:e.target.value})} /></div>
+            <Button onClick={save} className="bg-emerald-600 hover:bg-emerald-700">Save Company</Button>
+          </CardContent></Card>
+        </TabsContent>
+        <TabsContent value="contacts">
+          <Card><CardContent className="p-6 space-y-4">
+            <div>
+              <h3 className="font-semibold text-sm mb-3 text-emerald-700">📞 Phone Numbers</h3>
+              <div className="grid md:grid-cols-2 gap-3">
+                <div><Label>Bookings & Reservations</Label><Input value={s.phones?.bookings||''} onChange={e => setS({...s, phones:{...(s.phones||{}), bookings:e.target.value}})} /></div>
+                <div><Label>Support & Complaints</Label><Input value={s.phones?.support||''} onChange={e => setS({...s, phones:{...(s.phones||{}), support:e.target.value}})} /></div>
+                <div><Label>Coaching & Academy</Label><Input value={s.phones?.coaching||''} onChange={e => setS({...s, phones:{...(s.phones||{}), coaching:e.target.value}})} /></div>
+                <div><Label>Business & Partnerships</Label><Input value={s.phones?.business||''} onChange={e => setS({...s, phones:{...(s.phones||{}), business:e.target.value}})} /></div>
+                <div><Label>General Enquiries</Label><Input value={s.phones?.general||''} onChange={e => setS({...s, phones:{...(s.phones||{}), general:e.target.value}})} /></div>
+                <div><Label>WhatsApp Number</Label><Input value={s.whatsapp||''} onChange={e => setS({...s, whatsapp:e.target.value})} /></div>
+              </div>
+            </div>
+            <Separator />
+            <div>
+              <h3 className="font-semibold text-sm mb-3 text-emerald-700">✉ Email Addresses</h3>
+              <div className="grid md:grid-cols-2 gap-3">
+                <div><Label>Bookings & General</Label><Input value={s.emails?.bookings||''} onChange={e => setS({...s, emails:{...(s.emails||{}), bookings:e.target.value}})} /></div>
+                <div><Label>Support & Complaints</Label><Input value={s.emails?.support||''} onChange={e => setS({...s, emails:{...(s.emails||{}), support:e.target.value}})} /></div>
+                <div><Label>Business & Partnerships</Label><Input value={s.emails?.business||''} onChange={e => setS({...s, emails:{...(s.emails||{}), business:e.target.value}})} /></div>
+                <div><Label>Coaching & Academy</Label><Input value={s.emails?.coaching||''} onChange={e => setS({...s, emails:{...(s.emails||{}), coaching:e.target.value}})} /></div>
+              </div>
+            </div>
+            <Separator />
+            <div className="grid md:grid-cols-2 gap-3">
+              <div><Label>Primary Phone (on invoice)</Label><Input value={s.phone||''} onChange={e => setS({...s, phone:e.target.value})} /></div>
+              <div><Label>Primary Email (on invoice)</Label><Input value={s.email||''} onChange={e => setS({...s, email:e.target.value})} /></div>
+            </div>
+            <Button onClick={save} className="bg-emerald-600 hover:bg-emerald-700">Save Contacts</Button>
           </CardContent></Card>
         </TabsContent>
         <TabsContent value="invoice">
@@ -1045,7 +1084,7 @@ function Shell({ user, onLogout }) {
       <aside className={`fixed lg:static inset-y-0 left-0 z-40 w-64 bg-white border-r flex flex-col transition-transform ${open ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
         <div className="p-4 border-b">
           <div className="flex items-center gap-2">
-            <div className="size-10 rounded-lg bg-emerald-600 text-white grid place-items-center font-bold">N</div>
+            <img src={LOGO_URL} alt="Athletixcel" className="size-11 rounded-lg bg-white p-0.5 border object-contain" />
             <div>
               <h1 className="font-bold leading-tight">NexTurf <span className="text-emerald-600">ERP</span></h1>
               <p className="text-[10px] text-muted-foreground">Athletixcel Sports</p>
