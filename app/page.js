@@ -1252,6 +1252,10 @@ function Staff() {
   const [list, setList] = useState([]);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ userId:'', name:'', email:'', mobile:'', role:'Staff', password:'' });
+  const [editOpen, setEditOpen] = useState(null);  // staff to edit
+  const [editForm, setEditForm] = useState(null);
+  const [pwOpen, setPwOpen] = useState(null);  // staff to reset password
+  const [newPw, setNewPw] = useState('');
   const load = () => api('/staff').then(setList);
   useEffect(() => { load(); }, []);
   async function save() {
@@ -1264,10 +1268,41 @@ function Staff() {
       toast.success('Staff added'); setOpen(false); setForm({ userId:'', name:'', email:'', mobile:'', role:'Staff', password:'' }); load();
     } catch (e) { toast.error(e.message); }
   }
+  function openEdit(u) {
+    setEditForm({ name: u.name||'', email: u.email||'', mobile: u.mobile||'', role: u.role||'Staff', status: u.status||'active' });
+    setEditOpen(u);
+  }
+  async function saveEdit() {
+    if (!editOpen || !editForm) return;
+    const ne = validateName(editForm.name); if (ne) return toast.error(ne);
+    if (editForm.mobile) { const me = validateMobile(editForm.mobile); if (me) return toast.error(me); }
+    if (editForm.email) { const ee = validateEmail(editForm.email, false); if (ee) return toast.error(ee); }
+    try {
+      await api(`/staff/${editOpen.id}`, { method: 'PUT', body: JSON.stringify(editForm) });
+      toast.success('Staff updated'); setEditOpen(null); setEditForm(null); load();
+    } catch (e) { toast.error(e.message); }
+  }
+  async function resetPassword() {
+    if (!pwOpen) return;
+    if (!newPw || newPw.length < 4) return toast.error('Password must be at least 4 characters');
+    try {
+      await api(`/staff/${pwOpen.id}`, { method: 'PUT', body: JSON.stringify({ password: newPw, mustChange: true }) });
+      toast.success(`Password reset for ${pwOpen.userId}. They must change on next login.`);
+      setPwOpen(null); setNewPw('');
+    } catch (e) { toast.error(e.message); }
+  }
+  async function removeStaff(u) {
+    if (u.userId === 'admin') return toast.error('Cannot remove the default Super Admin');
+    if (!confirm(`Remove ${u.name} (${u.userId})? This cannot be undone.`)) return;
+    try {
+      await api(`/staff/${u.id}`, { method: 'DELETE' });
+      toast.success('Staff removed'); load();
+    } catch (e) { toast.error(e.message); }
+  }
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <div><h1 className="text-2xl font-bold">Staff & Roles</h1><p className="text-sm text-muted-foreground">Manage users and role-based access.</p></div>
+        <div><h1 className="text-2xl font-bold">Staff & Roles</h1><p className="text-sm text-muted-foreground">Manage users and role-based access (Super Admin only).</p></div>
         <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger asChild><Button className="bg-emerald-600 hover:bg-emerald-700"><Plus className="size-4 mr-1"/>Add Staff</Button></DialogTrigger>
           <DialogContent>
@@ -1295,11 +1330,98 @@ function Staff() {
           </DialogContent>
         </Dialog>
       </div>
-      <Card><CardContent className="p-0">
-        <Table><TableHeader><TableRow><TableHead>User ID</TableHead><TableHead>Name</TableHead><TableHead>Email</TableHead><TableHead>Role</TableHead><TableHead>Status</TableHead></TableRow></TableHeader>
-          <TableBody>{list.map(u => <TableRow key={u.id}><TableCell className="font-mono">{u.userId}</TableCell><TableCell>{u.name}</TableCell><TableCell>{u.email||'-'}</TableCell><TableCell><Badge>{u.role}</Badge></TableCell><TableCell><Badge variant={u.status==='active'?'default':'destructive'}>{u.status}</Badge></TableCell></TableRow>)}</TableBody>
+      <Card><CardContent className="p-0 overflow-x-auto">
+        <Table>
+          <TableHeader><TableRow>
+            <TableHead>User ID</TableHead><TableHead>Name</TableHead><TableHead>Email</TableHead>
+            <TableHead>Mobile</TableHead><TableHead>Role</TableHead><TableHead>Status</TableHead>
+            <TableHead className="text-right">Actions</TableHead>
+          </TableRow></TableHeader>
+          <TableBody>
+            {list.length === 0 && <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-6">No staff yet</TableCell></TableRow>}
+            {list.map(u => (
+              <TableRow key={u.id}>
+                <TableCell className="font-mono text-xs">{u.userId}</TableCell>
+                <TableCell className="font-medium">{u.name}</TableCell>
+                <TableCell className="text-xs">{u.email||'-'}</TableCell>
+                <TableCell className="text-xs">{u.mobile||'-'}</TableCell>
+                <TableCell><Badge>{u.role}</Badge></TableCell>
+                <TableCell><Badge variant={u.status==='active'?'default':'destructive'}>{u.status}</Badge></TableCell>
+                <TableCell className="text-right">
+                  <div className="flex justify-end gap-1">
+                    <Button size="sm" variant="outline" onClick={() => openEdit(u)}>Edit</Button>
+                    <Button size="sm" variant="outline" className="text-emerald-700 border-emerald-300" onClick={() => { setPwOpen(u); setNewPw(''); }}>
+                      <KeyRound className="size-3.5 mr-1"/>Reset Password
+                    </Button>
+                    {u.userId !== 'admin' && (
+                      <Button size="icon" variant="ghost" onClick={() => removeStaff(u)} title="Remove staff">
+                        <Trash2 className="size-4 text-rose-500"/>
+                      </Button>
+                    )}
+                  </div>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
         </Table>
       </CardContent></Card>
+
+      {/* Edit dialog */}
+      <Dialog open={!!editOpen} onOpenChange={() => { setEditOpen(null); setEditForm(null); }}>
+        <DialogContent>
+          {editOpen && editForm && (
+            <>
+              <DialogHeader>
+                <DialogTitle>Edit Staff · {editOpen.userId}</DialogTitle>
+                <p className="text-xs text-muted-foreground">User ID cannot be changed</p>
+              </DialogHeader>
+              <div className="space-y-3">
+                <div><Label>Name</Label><Input value={editForm.name} onChange={e => setEditForm({...editForm, name:e.target.value.replace(/[^A-Za-z\s.'-]/g, '')})} /></div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div><Label>Email</Label><Input value={editForm.email} onChange={e => setEditForm({...editForm, email:e.target.value})} placeholder="name@gmail.com" /></div>
+                  <div><Label>Mobile</Label><Input value={editForm.mobile} onChange={e => setEditForm({...editForm, mobile:e.target.value.replace(/\D/g,'').slice(0,10)})} maxLength={10} /></div>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div><Label>Role</Label>
+                    <Select value={editForm.role} onValueChange={v => setEditForm({...editForm, role:v})} disabled={editOpen.userId === 'admin'}>
+                      <SelectTrigger><SelectValue/></SelectTrigger>
+                      <SelectContent>{['Super Admin','Manager','Staff','Accountant','Viewer'].map(r => <SelectItem key={r} value={r}>{r}</SelectItem>)}</SelectContent>
+                    </Select>
+                  </div>
+                  <div><Label>Status</Label>
+                    <Select value={editForm.status} onValueChange={v => setEditForm({...editForm, status:v})} disabled={editOpen.userId === 'admin'}>
+                      <SelectTrigger><SelectValue/></SelectTrigger>
+                      <SelectContent><SelectItem value="active">Active</SelectItem><SelectItem value="disabled">Disabled</SelectItem></SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              </div>
+              <DialogFooter><Button onClick={saveEdit} className="bg-emerald-600 hover:bg-emerald-700">Save Changes</Button></DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Reset password dialog */}
+      <Dialog open={!!pwOpen} onOpenChange={() => { setPwOpen(null); setNewPw(''); }}>
+        <DialogContent className="max-w-md">
+          {pwOpen && (
+            <>
+              <DialogHeader>
+                <DialogTitle>Reset Password</DialogTitle>
+                <p className="text-xs text-muted-foreground">Set a new password for <span className="font-mono text-foreground">{pwOpen.userId}</span> ({pwOpen.name}). They will be asked to change it on next login.</p>
+              </DialogHeader>
+              <div className="space-y-3">
+                <div><Label>New Password</Label><Input type="password" value={newPw} onChange={e => setNewPw(e.target.value)} placeholder="Min 4 characters" /></div>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => { setPwOpen(null); setNewPw(''); }}>Cancel</Button>
+                <Button onClick={resetPassword} className="bg-emerald-600 hover:bg-emerald-700"><KeyRound className="size-4 mr-1"/>Reset Password</Button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
