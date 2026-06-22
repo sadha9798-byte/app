@@ -26,7 +26,15 @@ import {
 
 const COLORS = ['#22c55e','#f59e0b','#3b82f6','#8b5cf6','#ef4444','#06b6d4'];
 const LOGO_URL = 'https://customer-assets.emergentagent.com/job_venue-management-pro-2/artifacts/4h78znjp_athletixcel-0NRPYaoJM4U16J44.avif';
-const SPORT_COLOR = { Football: '#22c55e', Cricket: '#f59e0b', Volleyball: '#3b82f6', Coaching: '#8b5cf6' };
+const SPORT_COLOR = {
+  Football: '#22c55e',
+  Cricket: '#f59e0b',
+  Volleyball: '#3b82f6',
+  Coaching: '#8b5cf6',
+  Karate: '#ef4444',
+  'Kung Fu': '#06b6d4',
+  Others: '#64748b',
+};
 const STATUS_COLOR = {
   Confirmed: 'bg-red-500/15 text-red-600 border-red-500/30',
   Pending: 'bg-yellow-500/15 text-yellow-600 border-yellow-500/30',
@@ -265,7 +273,9 @@ function Dashboard() {
 function BookingForm({ onCreated, sports, initial }) {
   const [form, setForm] = useState({
     customerName: '', mobile: '', email: '',
+    gstNumber: '', lutNumber: '',
     sport: sports[0]?.name || 'Football',
+    sportCustom: '',
     bookingDate: todayStr(),
     startTime: '17:00', endTime: '18:00',
     ratePerHour: sports[0]?.ratePerHour || 1200,
@@ -302,6 +312,7 @@ function BookingForm({ onCreated, sports, initial }) {
     if (me) return toast.error(me);
     const ee = validateEmail(form.email, false);
     if (ee) return toast.error(ee);
+    if (form.sport === 'Others' && !form.sportCustom?.trim()) return toast.error('Please enter the event name for "Others"');
     if (hours <= 0) return toast.error('End time must be after start time');
     setBusy(true);
     try {
@@ -320,8 +331,12 @@ function BookingForm({ onCreated, sports, initial }) {
           <div><Label>Email <span className="text-muted-foreground text-xs">(optional)</span></Label><Input value={form.email} onChange={e => setForm({...form, email:e.target.value})} placeholder="name@gmail.com" /></div>
         </div>
         <div className="grid grid-cols-2 gap-2">
+          <div><Label>GST No <span className="text-muted-foreground text-xs">(optional)</span></Label><Input value={form.gstNumber} onChange={e => setForm({...form, gstNumber:e.target.value.toUpperCase()})} placeholder="29ABCDE1234F1Z5" /></div>
+          <div><Label>LUT No <span className="text-muted-foreground text-xs">(optional)</span></Label><Input value={form.lutNumber} onChange={e => setForm({...form, lutNumber:e.target.value})} placeholder="LUT reference (for export)" /></div>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
           <div>
-            <Label>Sport</Label>
+            <Label>Sport / Event</Label>
             <Select value={form.sport} onValueChange={setSport}>
               <SelectTrigger><SelectValue/></SelectTrigger>
               <SelectContent>{sports.map(s => <SelectItem key={s.id} value={s.name}>{s.name}</SelectItem>)}</SelectContent>
@@ -329,6 +344,9 @@ function BookingForm({ onCreated, sports, initial }) {
           </div>
           <div><Label>Date</Label><Input type="date" value={form.bookingDate} onChange={e => setForm({...form, bookingDate:e.target.value})} /></div>
         </div>
+        {form.sport === 'Others' && (
+          <div><Label>Specify Event Name <span className="text-rose-500">*</span></Label><Input value={form.sportCustom} onChange={e => setForm({...form, sportCustom:e.target.value})} placeholder="e.g. Yoga, Zumba, Tennis, Birthday Event..." /></div>
+        )}
         <div className="grid grid-cols-2 gap-2">
           <div>
             <Label>Start <span className="text-muted-foreground text-xs">({fmtTime12(form.startTime)})</span></Label>
@@ -847,6 +865,7 @@ function InvoiceView({ invoice, company, payments, onClose }) {
               <p>{invoice.mobile}</p>
               <p>{invoice.email}</p>
               {invoice.gstNumber && <p>GSTIN: <span className="font-mono">{invoice.gstNumber}</span></p>}
+              {invoice.lutNumber && <p>LUT: <span className="font-mono">{invoice.lutNumber}</span></p>}
             </div>
             <div>
               <p className="text-xs uppercase text-muted-foreground mb-1">Booking</p>
@@ -899,8 +918,8 @@ function InvoiceView({ invoice, company, payments, onClose }) {
 function InvoiceFormDialog({ open, onClose, sports, initial, onSaved }) {
   const isEdit = !!initial;
   const [form, setForm] = useState(() => initial || {
-    customerName:'', mobile:'', email:'', gstNumber:'',
-    sport: sports[0]?.name || 'Football',
+    customerName:'', mobile:'', email:'', gstNumber:'', lutNumber:'',
+    sport: sports[0]?.name || 'Football', sportCustom: '',
     bookingDate: todayStr(), startTime: '17:00', endTime: '18:00',
     ratePerHour: sports[0]?.ratePerHour || 1200,
     discount: 0, gstRate: 18,
@@ -946,9 +965,10 @@ function InvoiceFormDialog({ open, onClose, sports, initial, onSaved }) {
               <div><Label>Mobile <span className="text-rose-500">*</span></Label><Input value={form.mobile} onChange={e => setForm({...form, mobile:e.target.value.replace(/\D/g, '').slice(0,10)})} maxLength={10} inputMode="numeric"/></div>
               <div><Label>Email <span className="text-muted-foreground text-xs">(opt)</span></Label><Input value={form.email||''} onChange={e => setForm({...form, email:e.target.value})} placeholder="name@gmail.com" /></div>
             </div>
-            <div><Label>GSTIN (optional)</Label><Input value={form.gstNumber||''} onChange={e => setForm({...form, gstNumber:e.target.value})} /></div>
+            <div><Label>GSTIN <span className="text-muted-foreground text-xs">(optional)</span></Label><Input value={form.gstNumber||''} onChange={e => setForm({...form, gstNumber:e.target.value.toUpperCase()})} placeholder="29ABCDE1234F1Z5" /></div>
+            <div><Label>LUT No <span className="text-muted-foreground text-xs">(optional)</span></Label><Input value={form.lutNumber||''} onChange={e => setForm({...form, lutNumber:e.target.value})} placeholder="LUT reference" /></div>
             <div className="grid grid-cols-2 gap-2">
-              <div><Label>Sport</Label>
+              <div><Label>Sport / Event</Label>
                 <Select value={form.sport} onValueChange={v => setForm({...form, sport:v})}>
                   <SelectTrigger><SelectValue/></SelectTrigger>
                   <SelectContent>{sports.map(s => <SelectItem key={s.id} value={s.name}>{s.name}</SelectItem>)}</SelectContent>
@@ -956,6 +976,9 @@ function InvoiceFormDialog({ open, onClose, sports, initial, onSaved }) {
               </div>
               <div><Label>Date</Label><Input type="date" value={form.bookingDate} onChange={e => setForm({...form, bookingDate:e.target.value})} /></div>
             </div>
+            {form.sport === 'Others' && (
+              <div><Label>Specify Event Name <span className="text-rose-500">*</span></Label><Input value={form.sportCustom||''} onChange={e => setForm({...form, sportCustom:e.target.value})} placeholder="e.g. Yoga, Tennis..." /></div>
+            )}
             <div className="grid grid-cols-2 gap-2">
               <div><Label>Start <span className="text-muted-foreground text-xs">({fmtTime12(form.startTime)})</span></Label><Input type="time" value={form.startTime} onChange={e => setForm({...form, startTime:e.target.value})} /></div>
               <div><Label>End <span className="text-muted-foreground text-xs">({fmtTime12(form.endTime)})</span></Label><Input type="time" value={form.endTime} onChange={e => setForm({...form, endTime:e.target.value})} /></div>

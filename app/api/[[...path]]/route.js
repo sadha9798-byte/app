@@ -216,20 +216,33 @@ async function handler(request, { params }) {
     let customer = null;
     if (b.mobile) customer = await db.collection('customers').findOne({ mobile: b.mobile });
     if (!customer) {
-      customer = { id: uuid(), name: b.customerName, mobile: b.mobile, email: b.email || '', address: '', gstNumber: '', createdAt: new Date().toISOString() };
+      customer = { id: uuid(), name: b.customerName, mobile: b.mobile, email: b.email || '', address: '', gstNumber: b.gstNumber || '', lutNumber: b.lutNumber || '', createdAt: new Date().toISOString() };
       await db.collection('customers').insertOne(customer);
+    } else if (b.gstNumber || b.lutNumber) {
+      // update GST/LUT if newly provided
+      const upd = {};
+      if (b.gstNumber && !customer.gstNumber) upd.gstNumber = b.gstNumber;
+      if (b.lutNumber && !customer.lutNumber) upd.lutNumber = b.lutNumber;
+      if (Object.keys(upd).length) {
+        await db.collection('customers').updateOne({ id: customer.id }, { $set: upd });
+        customer = { ...customer, ...upd };
+      }
     }
     const totalHours = computeHours(b.startTime, b.endTime);
     const t = computeTotals({ ratePerHour: b.ratePerHour, totalHours, discount: b.discount, gstRate: b.gstRate ?? 18, advanceAmount: b.advanceAmount });
 
+    const sportName = b.sport === 'Others' && b.sportCustom ? b.sportCustom : b.sport;
     const bookingId = `BK-${Date.now().toString().slice(-8)}`;
     const doc = {
       id: uuid(), bookingId,
       customerId: customer.id, customerName: customer.name, mobile: customer.mobile, email: customer.email,
-      sport: b.sport, bookingDate: b.bookingDate, startTime: b.startTime, endTime: b.endTime,
+      gstNumber: b.gstNumber || customer.gstNumber || '',
+      lutNumber: b.lutNumber || customer.lutNumber || '',
+      sport: sportName, sportCategory: b.sport, // Football/Others/etc
+      bookingDate: b.bookingDate, startTime: b.startTime, endTime: b.endTime,
       totalHours, ratePerHour: Number(b.ratePerHour) || 0, discount: Number(b.discount) || 0, gstRate: Number(b.gstRate ?? 18),
       gross: t.gross, taxableValue: t.taxable, tax: t.tax,
-      subtotal: t.taxable, // legacy alias = base
+      subtotal: t.taxable,
       totalAmount: t.totalAmount, advanceAmount: t.paidAmount, balanceAmount: t.balance,
       paymentStatus: t.paidAmount >= t.totalAmount ? 'Paid' : t.paidAmount > 0 ? 'Partial' : 'Unpaid',
       status: b.status || 'Confirmed',
@@ -243,14 +256,16 @@ async function handler(request, { params }) {
       id: uuid(), invoiceNumber,
       bookingId: doc.id, bookingRef: doc.bookingId,
       customerId: customer.id, customerName: customer.name, mobile: customer.mobile, email: customer.email,
-      gstNumber: customer.gstNumber || '',
-      sport: doc.sport, bookingDate: doc.bookingDate, startTime: doc.startTime, endTime: doc.endTime,
+      gstNumber: b.gstNumber || customer.gstNumber || '',
+      lutNumber: b.lutNumber || customer.lutNumber || '',
+      sport: sportName, sportCategory: b.sport,
+      bookingDate: doc.bookingDate, startTime: doc.startTime, endTime: doc.endTime,
       totalHours, ratePerHour: doc.ratePerHour,
       gross: t.gross, taxableValue: t.taxable, subtotal: t.taxable,
       discount: doc.discount, gstRate: doc.gstRate, tax: t.tax,
       totalAmount: t.totalAmount, paidAmount: t.paidAmount, balance: t.balance,
       gstInclusive: true,
-      isGst: !!customer.gstNumber,
+      isGst: !!(b.gstNumber || customer.gstNumber),
       status: 'Issued', createdAt: new Date().toISOString(), createdBy: auth.userId,
     };
     await db.collection('invoices').insertOne(inv);
@@ -317,16 +332,20 @@ async function handler(request, { params }) {
     let customer = null;
     if (b.mobile) customer = await db.collection('customers').findOne({ mobile: b.mobile });
     if (!customer) {
-      customer = { id: uuid(), name: b.customerName, mobile: b.mobile, email: b.email || '', address: '', gstNumber: b.gstNumber || '', createdAt: new Date().toISOString() };
+      customer = { id: uuid(), name: b.customerName, mobile: b.mobile, email: b.email || '', address: '', gstNumber: b.gstNumber || '', lutNumber: b.lutNumber || '', createdAt: new Date().toISOString() };
       await db.collection('customers').insertOne(customer);
     }
     const totalHours = computeHours(b.startTime, b.endTime);
     const t = computeTotals({ ratePerHour: b.ratePerHour, totalHours, discount: b.discount, gstRate: b.gstRate ?? 18, advanceAmount: b.paidAmount });
+    const sportName = b.sport === 'Others' && b.sportCustom ? b.sportCustom : b.sport;
     const bookingId = `BK-${Date.now().toString().slice(-8)}`;
     const booking = {
       id: uuid(), bookingId,
       customerId: customer.id, customerName: customer.name, mobile: customer.mobile, email: customer.email,
-      sport: b.sport, bookingDate: b.bookingDate, startTime: b.startTime, endTime: b.endTime,
+      gstNumber: b.gstNumber || customer.gstNumber || '',
+      lutNumber: b.lutNumber || customer.lutNumber || '',
+      sport: sportName, sportCategory: b.sport,
+      bookingDate: b.bookingDate, startTime: b.startTime, endTime: b.endTime,
       totalHours, ratePerHour: Number(b.ratePerHour) || 0, discount: Number(b.discount) || 0, gstRate: Number(b.gstRate ?? 18),
       gross: t.gross, taxableValue: t.taxable, subtotal: t.taxable, tax: t.tax,
       totalAmount: t.totalAmount, advanceAmount: t.paidAmount, balanceAmount: t.balance,
@@ -340,13 +359,15 @@ async function handler(request, { params }) {
       id: uuid(), invoiceNumber,
       bookingId: booking.id, bookingRef: booking.bookingId,
       customerId: customer.id, customerName: customer.name, mobile: customer.mobile, email: customer.email,
-      gstNumber: customer.gstNumber || b.gstNumber || '',
-      sport: booking.sport, bookingDate: booking.bookingDate, startTime: booking.startTime, endTime: booking.endTime,
+      gstNumber: b.gstNumber || customer.gstNumber || '',
+      lutNumber: b.lutNumber || customer.lutNumber || '',
+      sport: sportName, sportCategory: b.sport,
+      bookingDate: booking.bookingDate, startTime: booking.startTime, endTime: booking.endTime,
       totalHours, ratePerHour: booking.ratePerHour,
       gross: t.gross, taxableValue: t.taxable, subtotal: t.taxable,
       discount: booking.discount, gstRate: booking.gstRate, tax: t.tax,
       totalAmount: t.totalAmount, paidAmount: t.paidAmount, balance: t.balance,
-      gstInclusive: true, isGst: !!customer.gstNumber,
+      gstInclusive: true, isGst: !!(b.gstNumber || customer.gstNumber),
       status: 'Issued', createdAt: new Date().toISOString(), createdBy: auth.userId,
     };
     await db.collection('invoices').insertOne(inv);
@@ -386,13 +407,16 @@ async function handler(request, { params }) {
       mobile: b.mobile ?? inv.mobile,
       email: b.email ?? inv.email,
       gstNumber: b.gstNumber ?? inv.gstNumber,
-      sport: b.sport ?? inv.sport,
+      lutNumber: b.lutNumber ?? inv.lutNumber,
+      sport: (b.sport === 'Others' && b.sportCustom) ? b.sportCustom : (b.sport ?? inv.sport),
+      sportCategory: b.sport ?? inv.sportCategory,
       bookingDate: b.bookingDate ?? inv.bookingDate,
       startTime, endTime,
       totalHours, ratePerHour: Number(ratePerHour), discount: Number(discount), gstRate: Number(gstRate),
       gross: t.gross, taxableValue: t.taxable, subtotal: t.taxable, tax: t.tax,
       totalAmount: t.totalAmount, balance: t.balance,
       gstInclusive: true,
+      isGst: !!(b.gstNumber ?? inv.gstNumber),
     };
     await db.collection('invoices').updateOne({ id }, { $set: update });
     // sync linked booking too
