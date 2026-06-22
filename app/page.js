@@ -39,6 +39,24 @@ function fmtINR(n) {
   return '\u20B9 ' + Number(n||0).toLocaleString('en-IN', { maximumFractionDigits: 2 });
 }
 function todayStr() { return new Date().toISOString().slice(0,10); }
+function fmtTime12(t) {
+  if (!t || !/^\d{1,2}:\d{2}/.test(t)) return t || '';
+  const [hh, mm] = t.split(':').map(Number);
+  const period = hh >= 12 ? 'PM' : 'AM';
+  const h12 = ((hh + 11) % 12) + 1;
+  return `${h12}:${String(mm).padStart(2,'0')} ${period}`;
+}
+// --- Validators ---
+const NAME_RE = /^[A-Za-z][A-Za-z\s.'-]*$/;
+const MOBILE_RE = /^[6-9]\d{9}$/;
+const EMAIL_RE = /^[A-Za-z][A-Za-z0-9._%+-]*@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
+function validateName(n) { if (!n || !n.trim()) return 'Name is required'; if (!NAME_RE.test(n.trim())) return 'Name must contain only letters (no numbers)'; return null; }
+function validateMobile(m) { if (!m) return 'Mobile is required'; if (!/^\d+$/.test(m)) return 'Mobile must be only numbers'; if (!MOBILE_RE.test(m)) return 'Mobile must be 10 digits starting with 6-9'; return null; }
+function validateEmail(e, required = false) {
+  if (!e || !e.trim()) return required ? 'Email is required' : null;
+  if (!EMAIL_RE.test(e.trim())) return 'Email must start with a letter and be a valid address (e.g. name@gmail.com)';
+  return null;
+}
 
 // ----------------- API CLIENT -----------------
 function api(path, opts = {}) {
@@ -227,7 +245,7 @@ function Dashboard() {
                 {data.upcoming.map(b => (
                   <TableRow key={b.id}>
                     <TableCell>{b.bookingDate}</TableCell>
-                    <TableCell>{b.startTime}–{b.endTime}</TableCell>
+                    <TableCell>{fmtTime12(b.startTime)}–{fmtTime12(b.endTime)}</TableCell>
                     <TableCell>{b.customerName}</TableCell>
                     <TableCell><Badge variant="outline" style={{borderColor: SPORT_COLOR[b.sport], color: SPORT_COLOR[b.sport]}}>{b.sport}</Badge></TableCell>
                     <TableCell><Badge className={STATUS_COLOR[b.status] + ' border'}>{b.status}</Badge></TableCell>
@@ -264,10 +282,12 @@ function BookingForm({ onCreated, sports, initial }) {
     let mins = (eh*60+em) - (sh*60+sm); if (mins<0) mins += 24*60;
     return +(mins/60).toFixed(2);
   }, [form.startTime, form.endTime]);
-  const subtotal = hours * Number(form.ratePerHour||0);
-  const taxable = Math.max(0, subtotal - Number(form.discount||0));
-  const tax = +(taxable * Number(form.gstRate||0) / 100).toFixed(2);
-  const total = +(taxable + tax).toFixed(2);
+  // GST INCLUSIVE pricing
+  const gross = hours * Number(form.ratePerHour||0);
+  const afterDiscount = Math.max(0, gross - Number(form.discount||0));
+  const tax = +(afterDiscount * Number(form.gstRate||0) / 100).toFixed(2);
+  const base = +(afterDiscount - tax).toFixed(2);
+  const total = afterDiscount; // since rate is inclusive
   const balance = +(total - Number(form.advanceAmount||0)).toFixed(2);
 
   function setSport(name) {
@@ -276,7 +296,13 @@ function BookingForm({ onCreated, sports, initial }) {
   }
 
   async function submit() {
-    if (!form.customerName || !form.mobile) return toast.error('Customer name & mobile required');
+    const ne = validateName(form.customerName);
+    if (ne) return toast.error(ne);
+    const me = validateMobile(form.mobile);
+    if (me) return toast.error(me);
+    const ee = validateEmail(form.email, false);
+    if (ee) return toast.error(ee);
+    if (hours <= 0) return toast.error('End time must be after start time');
     setBusy(true);
     try {
       const r = await api('/bookings', { method: 'POST', body: JSON.stringify(form) });
@@ -288,10 +314,10 @@ function BookingForm({ onCreated, sports, initial }) {
   return (
     <div className="grid md:grid-cols-2 gap-4">
       <div className="space-y-3">
-        <div><Label>Customer Name</Label><Input value={form.customerName} onChange={e => setForm({...form, customerName:e.target.value})} /></div>
+        <div><Label>Customer Name <span className="text-rose-500">*</span></Label><Input value={form.customerName} onChange={e => setForm({...form, customerName:e.target.value.replace(/[^A-Za-z\s.'-]/g, '')})} placeholder="Letters only" /></div>
         <div className="grid grid-cols-2 gap-2">
-          <div><Label>Mobile</Label><Input value={form.mobile} onChange={e => setForm({...form, mobile:e.target.value})} /></div>
-          <div><Label>Email</Label><Input value={form.email} onChange={e => setForm({...form, email:e.target.value})} /></div>
+          <div><Label>Mobile <span className="text-rose-500">*</span></Label><Input value={form.mobile} onChange={e => setForm({...form, mobile:e.target.value.replace(/\D/g, '').slice(0,10)})} placeholder="10-digit (e.g. 9876543210)" inputMode="numeric" maxLength={10} /></div>
+          <div><Label>Email <span className="text-muted-foreground text-xs">(optional)</span></Label><Input value={form.email} onChange={e => setForm({...form, email:e.target.value})} placeholder="name@gmail.com" /></div>
         </div>
         <div className="grid grid-cols-2 gap-2">
           <div>
@@ -304,11 +330,17 @@ function BookingForm({ onCreated, sports, initial }) {
           <div><Label>Date</Label><Input type="date" value={form.bookingDate} onChange={e => setForm({...form, bookingDate:e.target.value})} /></div>
         </div>
         <div className="grid grid-cols-2 gap-2">
-          <div><Label>Start</Label><Input type="time" value={form.startTime} onChange={e => setForm({...form, startTime:e.target.value})} /></div>
-          <div><Label>End</Label><Input type="time" value={form.endTime} onChange={e => setForm({...form, endTime:e.target.value})} /></div>
+          <div>
+            <Label>Start <span className="text-muted-foreground text-xs">({fmtTime12(form.startTime)})</span></Label>
+            <Input type="time" value={form.startTime} onChange={e => setForm({...form, startTime:e.target.value})} />
+          </div>
+          <div>
+            <Label>End <span className="text-muted-foreground text-xs">({fmtTime12(form.endTime)})</span></Label>
+            <Input type="time" value={form.endTime} onChange={e => setForm({...form, endTime:e.target.value})} />
+          </div>
         </div>
         <div className="grid grid-cols-3 gap-2">
-          <div><Label>Rate/hr</Label><Input type="number" value={form.ratePerHour} onChange={e => setForm({...form, ratePerHour:e.target.value})} /></div>
+          <div><Label>Rate/hr <span className="text-xs text-emerald-700">(incl. GST)</span></Label><Input type="number" value={form.ratePerHour} onChange={e => setForm({...form, ratePerHour:e.target.value})} /></div>
           <div><Label>Discount</Label><Input type="number" value={form.discount} onChange={e => setForm({...form, discount:e.target.value})} /></div>
           <div><Label>GST %</Label><Input type="number" value={form.gstRate} onChange={e => setForm({...form, gstRate:e.target.value})} /></div>
         </div>
@@ -334,21 +366,28 @@ function BookingForm({ onCreated, sports, initial }) {
       <div className="space-y-3">
         <Card>
           <CardContent className="p-4">
-            <div className="text-xs uppercase tracking-wider text-muted-foreground mb-2">Booking Summary</div>
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-xs uppercase tracking-wider text-muted-foreground">Booking Summary</div>
+              <Badge variant="outline" className="text-emerald-700 border-emerald-300 bg-emerald-50">GST Inclusive</Badge>
+            </div>
             <div className="space-y-1 text-sm">
               <div className="flex justify-between"><span>Hours</span><span className="font-medium">{hours} hr</span></div>
-              <div className="flex justify-between"><span>Subtotal</span><span>{fmtINR(subtotal)}</span></div>
+              <div className="flex justify-between"><span>Rate × Hours (incl. GST)</span><span>{fmtINR(gross)}</span></div>
               <div className="flex justify-between"><span>Discount</span><span>-{fmtINR(form.discount)}</span></div>
-              <div className="flex justify-between"><span>GST ({form.gstRate}%)</span><span>{fmtINR(tax)}</span></div>
+              <Separator className="my-1" />
+              <div className="flex justify-between text-muted-foreground"><span>Base value (taxable)</span><span>{fmtINR(base)}</span></div>
+              <div className="flex justify-between text-muted-foreground"><span>CGST ({(Number(form.gstRate)/2).toFixed(1)}%)</span><span>{fmtINR(tax/2)}</span></div>
+              <div className="flex justify-between text-muted-foreground"><span>SGST ({(Number(form.gstRate)/2).toFixed(1)}%)</span><span>{fmtINR(tax/2)}</span></div>
+              <div className="flex justify-between text-muted-foreground"><span>Total GST ({form.gstRate}%)</span><span>{fmtINR(tax)}</span></div>
               <Separator className="my-2" />
-              <div className="flex justify-between text-base font-bold"><span>Total</span><span>{fmtINR(total)}</span></div>
+              <div className="flex justify-between text-base font-bold"><span>Total (customer pays)</span><span>{fmtINR(total)}</span></div>
               <div className="flex justify-between text-emerald-700"><span>Advance</span><span>{fmtINR(form.advanceAmount)}</span></div>
               <div className="flex justify-between text-rose-700 font-medium"><span>Balance</span><span>{fmtINR(balance)}</span></div>
             </div>
             <Button onClick={submit} disabled={busy} className="w-full mt-4 bg-emerald-600 hover:bg-emerald-700">
               {busy ? 'Creating...' : 'Create Booking + Auto-Invoice'}
             </Button>
-            <p className="text-[11px] text-muted-foreground mt-2">An invoice (e.g. NXT-2026-000001) will be auto-generated.</p>
+            <p className="text-[11px] text-muted-foreground mt-2">Rate is GST-inclusive · Auto-invoice in format NXT-{new Date().getFullYear()}-NNNNNN</p>
           </CardContent>
         </Card>
       </div>
@@ -395,7 +434,7 @@ function CalendarView({ bookings, onDayClick }) {
                 <div className="mt-1 space-y-0.5">
                   {bks.slice(0,2).map(b => (
                     <div key={b.id} className="text-[10px] truncate px-1 py-0.5 rounded text-white" style={{background: SPORT_COLOR[b.sport] || '#64748b'}}>
-                      {b.startTime} {b.customerName}
+                      {fmtTime12(b.startTime)} {b.customerName}
                     </div>
                   ))}
                   {bks.length > 2 && <div className="text-[10px] text-muted-foreground">+{bks.length-2} more</div>}
@@ -416,11 +455,77 @@ function Bookings() {
   const [view, setView] = useState('calendar');
   const [filterDate, setFilterDate] = useState('');
   const [query, setQuery] = useState('');
+  const [payOpen, setPayOpen] = useState(null); // booking row for payment
+  const [payments, setPayments] = useState([]);
+  const [newPay, setNewPay] = useState({ amount: 0, mode: 'Cash', notes: '' });
 
   const load = useCallback(() => {
     api('/bookings').then(setList).catch(e => toast.error(e.message));
   }, []);
   useEffect(() => { load(); api('/sports').then(setSports); }, [load]);
+
+  async function openPaymentDialog(booking) {
+    // find invoice for this booking
+    const allInv = await api('/invoices');
+    const inv = allInv.find(i => i.bookingId === booking.id);
+    if (!inv) return toast.error('No invoice found for this booking');
+    const allPay = await api('/payments');
+    const myPay = allPay.filter(p => p.invoiceId === inv.id);
+    setPayments(myPay);
+    setPayOpen({ booking, invoice: inv });
+    setNewPay({ amount: inv.balance || 0, mode: 'Cash', notes: '' });
+  }
+  async function addPayment() {
+    if (!payOpen) return;
+    const amt = Number(newPay.amount);
+    if (!amt || amt <= 0) return toast.error('Enter a valid amount');
+    if (amt > payOpen.invoice.balance + 0.01) return toast.error(`Cannot pay more than balance ${fmtINR(payOpen.invoice.balance)}`);
+    try {
+      await api('/payments', { method: 'POST', body: JSON.stringify({ invoiceId: payOpen.invoice.id, amount: amt, mode: newPay.mode, notes: newPay.notes }) });
+      toast.success('Payment recorded');
+      setNewPay({ amount: 0, mode: 'Cash', notes: '' });
+      // refresh dialog data
+      const allInv = await api('/invoices');
+      const inv = allInv.find(i => i.id === payOpen.invoice.id);
+      const allPay = await api('/payments');
+      setPayments(allPay.filter(p => p.invoiceId === inv.id));
+      setPayOpen({ ...payOpen, invoice: inv });
+      load();
+    } catch (e) { toast.error(e.message); }
+  }
+  async function updatePayment(p, patch) {
+    try {
+      await api(`/payments/${p.id}`, { method: 'PUT', body: JSON.stringify(patch) });
+      toast.success('Payment updated');
+      const allInv = await api('/invoices');
+      const inv = allInv.find(i => i.id === payOpen.invoice.id);
+      const allPay = await api('/payments');
+      setPayments(allPay.filter(p => p.invoiceId === inv.id));
+      setPayOpen({ ...payOpen, invoice: inv });
+      load();
+    } catch (e) { toast.error(e.message); }
+  }
+  async function deletePayment(id) {
+    if (!confirm('Delete this payment?')) return;
+    try {
+      await api(`/payments/${id}`, { method: 'DELETE' });
+      toast.success('Payment deleted');
+      const allInv = await api('/invoices');
+      const inv = allInv.find(i => i.id === payOpen.invoice.id);
+      const allPay = await api('/payments');
+      setPayments(allPay.filter(p => p.invoiceId === inv.id));
+      setPayOpen({ ...payOpen, invoice: inv });
+      load();
+    } catch (e) { toast.error(e.message); }
+  }
+  async function deleteBooking(b) {
+    if (!confirm(`Delete booking ${b.bookingId}? This will also delete its invoice and payments.`)) return;
+    try {
+      await api(`/bookings/${b.id}`, { method: 'DELETE' });
+      toast.success('Booking deleted');
+      load();
+    } catch (e) { toast.error(e.message); }
+  }
 
   const filtered = list.filter(b => {
     if (filterDate && b.bookingDate !== filterDate) return false;
@@ -479,14 +584,15 @@ function Bookings() {
                 <TableHead>Booking ID</TableHead><TableHead>Date</TableHead><TableHead>Time</TableHead>
                 <TableHead>Customer</TableHead><TableHead>Sport</TableHead><TableHead>Status</TableHead>
                 <TableHead>Payment</TableHead><TableHead className="text-right">Total</TableHead><TableHead className="text-right">Balance</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
               </TableRow></TableHeader>
               <TableBody>
-                {filtered.length === 0 && <TableRow><TableCell colSpan={9} className="text-center text-muted-foreground py-6">No bookings found</TableCell></TableRow>}
+                {filtered.length === 0 && <TableRow><TableCell colSpan={10} className="text-center text-muted-foreground py-6">No bookings found</TableCell></TableRow>}
                 {filtered.map(b => (
                   <TableRow key={b.id}>
                     <TableCell className="font-mono text-xs">{b.bookingId}</TableCell>
                     <TableCell>{b.bookingDate}</TableCell>
-                    <TableCell>{b.startTime}–{b.endTime}</TableCell>
+                    <TableCell>{fmtTime12(b.startTime)}–{fmtTime12(b.endTime)}</TableCell>
                     <TableCell>
                       <div className="font-medium">{b.customerName}</div>
                       <div className="text-xs text-muted-foreground">{b.mobile}</div>
@@ -498,6 +604,16 @@ function Bookings() {
                     </TableCell>
                     <TableCell className="text-right">{fmtINR(b.totalAmount)}</TableCell>
                     <TableCell className="text-right text-rose-600 font-medium">{fmtINR(b.balanceAmount)}</TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex justify-end gap-1">
+                        <Button size="sm" variant="outline" className="text-emerald-700 border-emerald-300" onClick={() => openPaymentDialog(b)}>
+                          <Wallet className="size-3.5 mr-1"/>{b.balanceAmount > 0 ? 'Update Payment' : 'View Payments'}
+                        </Button>
+                        <Button size="icon" variant="ghost" onClick={() => deleteBooking(b)}>
+                          <Trash2 className="size-4 text-rose-500"/>
+                        </Button>
+                      </div>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -505,7 +621,96 @@ function Bookings() {
           </CardContent>
         </Card>
       )}
+
+      {/* Payment dialog */}
+      <Dialog open={!!payOpen} onOpenChange={() => setPayOpen(null)}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          {payOpen && (
+            <>
+              <DialogHeader>
+                <DialogTitle>Payment Tracker · {payOpen.booking.bookingId}</DialogTitle>
+                <p className="text-xs text-muted-foreground">{payOpen.booking.customerName} · {payOpen.booking.mobile} · {payOpen.booking.bookingDate} · {fmtTime12(payOpen.booking.startTime)}–{fmtTime12(payOpen.booking.endTime)}</p>
+              </DialogHeader>
+              <div className="grid grid-cols-3 gap-2 my-2">
+                <Card><CardContent className="p-3"><p className="text-[10px] uppercase text-muted-foreground">Total</p><p className="text-base font-bold">{fmtINR(payOpen.invoice.totalAmount)}</p></CardContent></Card>
+                <Card><CardContent className="p-3"><p className="text-[10px] uppercase text-muted-foreground">Paid</p><p className="text-base font-bold text-emerald-700">{fmtINR(payOpen.invoice.paidAmount)}</p></CardContent></Card>
+                <Card><CardContent className="p-3"><p className="text-[10px] uppercase text-muted-foreground">Balance</p><p className="text-base font-bold text-rose-600">{fmtINR(payOpen.invoice.balance)}</p></CardContent></Card>
+              </div>
+
+              {payOpen.invoice.balance > 0 && (
+                <Card className="bg-emerald-50/40 border-emerald-200">
+                  <CardContent className="p-3 space-y-2">
+                    <p className="text-sm font-semibold text-emerald-700">+ Add new payment</p>
+                    <div className="grid grid-cols-3 gap-2">
+                      <div><Label className="text-xs">Amount</Label><Input type="number" value={newPay.amount} onChange={e => setNewPay({...newPay, amount:e.target.value})} /></div>
+                      <div><Label className="text-xs">Mode</Label>
+                        <Select value={newPay.mode} onValueChange={v => setNewPay({...newPay, mode:v})}>
+                          <SelectTrigger><SelectValue/></SelectTrigger>
+                          <SelectContent>{['Cash','UPI','Google Pay','PhonePe','Paytm','Card','Bank Transfer','Cheque'].map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent>
+                        </Select>
+                      </div>
+                      <div><Label className="text-xs">Notes</Label><Input value={newPay.notes} onChange={e => setNewPay({...newPay, notes:e.target.value})} /></div>
+                    </div>
+                    <Button size="sm" onClick={addPayment} className="bg-emerald-600 hover:bg-emerald-700">Add Payment</Button>
+                  </CardContent>
+                </Card>
+              )}
+
+              <div className="mt-2">
+                <p className="text-sm font-semibold mb-2">Payment History ({payments.length})</p>
+                {payments.length === 0 && <p className="text-xs text-muted-foreground">No payments yet</p>}
+                <div className="space-y-2">
+                  {payments.map(p => (
+                    <PaymentRow key={p.id} payment={p} onUpdate={updatePayment} onDelete={deletePayment} />
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
+  );
+}
+
+function PaymentRow({ payment, onUpdate, onDelete }) {
+  const [edit, setEdit] = useState(false);
+  const [form, setForm] = useState({ amount: payment.amount, mode: payment.mode, notes: payment.notes || '' });
+  if (edit) {
+    return (
+      <Card className="border-emerald-300">
+        <CardContent className="p-3 grid grid-cols-12 gap-2 items-end">
+          <div className="col-span-3"><Label className="text-xs">Amount</Label><Input type="number" value={form.amount} onChange={e => setForm({...form, amount:e.target.value})} /></div>
+          <div className="col-span-3"><Label className="text-xs">Mode</Label>
+            <Select value={form.mode} onValueChange={v => setForm({...form, mode:v})}>
+              <SelectTrigger><SelectValue/></SelectTrigger>
+              <SelectContent>{['Cash','UPI','Google Pay','PhonePe','Paytm','Card','Bank Transfer','Cheque'].map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent>
+            </Select>
+          </div>
+          <div className="col-span-4"><Label className="text-xs">Notes</Label><Input value={form.notes} onChange={e => setForm({...form, notes:e.target.value})} /></div>
+          <div className="col-span-2 flex gap-1">
+            <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 flex-1" onClick={async () => { await onUpdate(payment, form); setEdit(false); }}>Save</Button>
+            <Button size="sm" variant="outline" onClick={() => setEdit(false)}>X</Button>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+  return (
+    <Card>
+      <CardContent className="p-3 flex items-center justify-between gap-2">
+        <div className="flex-1 grid grid-cols-4 gap-2 text-sm">
+          <div><span className="text-xs text-muted-foreground">Date</span><div>{payment.at?.slice(0,16).replace('T',' ')}</div></div>
+          <div><span className="text-xs text-muted-foreground">Amount</span><div className="font-semibold text-emerald-700">{fmtINR(payment.amount)}</div></div>
+          <div><span className="text-xs text-muted-foreground">Mode</span><div><Badge variant="outline">{payment.mode}</Badge></div></div>
+          <div><span className="text-xs text-muted-foreground">Notes</span><div className="text-xs text-muted-foreground truncate">{payment.notes || '—'}</div></div>
+        </div>
+        <div className="flex gap-1">
+          <Button size="sm" variant="outline" onClick={() => setEdit(true)}>Edit</Button>
+          <Button size="icon" variant="ghost" onClick={() => onDelete(payment.id)}><Trash2 className="size-4 text-rose-500"/></Button>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -519,7 +724,9 @@ function Customers() {
   useEffect(() => { load(); }, []);
 
   async function save() {
-    if (!form.name || !form.mobile) return toast.error('Name & mobile required');
+    const ne = validateName(form.name); if (ne) return toast.error(ne);
+    const me = validateMobile(form.mobile); if (me) return toast.error(me);
+    const ee = validateEmail(form.email, false); if (ee) return toast.error(ee);
     await api('/customers', { method: 'POST', body: JSON.stringify(form) });
     toast.success('Customer saved');
     setOpen(false); setForm({ name:'', mobile:'', email:'', address:'', gstNumber:'', companyName:'', notes:'' });
@@ -537,10 +744,10 @@ function Customers() {
           <DialogContent>
             <DialogHeader><DialogTitle>New Customer</DialogTitle></DialogHeader>
             <div className="space-y-3">
-              <div><Label>Name</Label><Input value={form.name} onChange={e => setForm({...form, name:e.target.value})} /></div>
+              <div><Label>Name <span className="text-rose-500">*</span></Label><Input value={form.name} onChange={e => setForm({...form, name:e.target.value.replace(/[^A-Za-z\s.'-]/g, '')})} placeholder="Letters only" /></div>
               <div className="grid grid-cols-2 gap-2">
-                <div><Label>Mobile</Label><Input value={form.mobile} onChange={e => setForm({...form, mobile:e.target.value})} /></div>
-                <div><Label>Email</Label><Input value={form.email} onChange={e => setForm({...form, email:e.target.value})} /></div>
+                <div><Label>Mobile <span className="text-rose-500">*</span></Label><Input value={form.mobile} onChange={e => setForm({...form, mobile:e.target.value.replace(/\D/g, '').slice(0,10)})} maxLength={10} inputMode="numeric" placeholder="10-digit" /></div>
+                <div><Label>Email <span className="text-muted-foreground text-xs">(optional)</span></Label><Input value={form.email} onChange={e => setForm({...form, email:e.target.value})} placeholder="name@gmail.com" /></div>
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <div><Label>Company</Label><Input value={form.companyName} onChange={e => setForm({...form, companyName:e.target.value})} /></div>
@@ -586,7 +793,7 @@ function Customers() {
                 <TabsList><TabsTrigger value="bookings">Bookings</TabsTrigger><TabsTrigger value="invoices">Invoices</TabsTrigger><TabsTrigger value="payments">Payments</TabsTrigger></TabsList>
                 <TabsContent value="bookings">
                   <Table><TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Sport</TableHead><TableHead>Time</TableHead><TableHead>Total</TableHead></TableRow></TableHeader>
-                    <TableBody>{selected.bookings.map(b => <TableRow key={b.id}><TableCell>{b.bookingDate}</TableCell><TableCell>{b.sport}</TableCell><TableCell>{b.startTime}-{b.endTime}</TableCell><TableCell>{fmtINR(b.totalAmount)}</TableCell></TableRow>)}</TableBody>
+                    <TableBody>{selected.bookings.map(b => <TableRow key={b.id}><TableCell>{b.bookingDate}</TableCell><TableCell>{b.sport}</TableCell><TableCell>{fmtTime12(b.startTime)}-{fmtTime12(b.endTime)}</TableCell><TableCell>{fmtINR(b.totalAmount)}</TableCell></TableRow>)}</TableBody>
                   </Table>
                 </TabsContent>
                 <TabsContent value="invoices">
@@ -645,31 +852,31 @@ function InvoiceView({ invoice, company, payments, onClose }) {
               <p className="text-xs uppercase text-muted-foreground mb-1">Booking</p>
               <p>Ref: <span className="font-mono">{invoice.bookingRef}</span></p>
               <p>Date: {invoice.bookingDate}</p>
-              <p>Slot: {invoice.startTime} - {invoice.endTime}</p>
+              <p>Slot: {fmtTime12(invoice.startTime)} - {fmtTime12(invoice.endTime)}</p>
               <p>Sport: {invoice.sport}</p>
             </div>
           </div>
           <table className="w-full text-sm border">
             <thead className="bg-emerald-50">
-              <tr><th className="p-2 text-left">Description</th><th className="p-2 text-right">Hours</th><th className="p-2 text-right">Rate</th><th className="p-2 text-right">Amount</th></tr>
+              <tr><th className="p-2 text-left">Description</th><th className="p-2 text-right">Hours</th><th className="p-2 text-right">Rate (excl. GST)</th><th className="p-2 text-right">Amount</th></tr>
             </thead>
             <tbody>
               <tr className="border-t">
-                <td className="p-2">{invoice.sport} turf booking ({invoice.startTime} - {invoice.endTime})</td>
+                <td className="p-2">{invoice.sport} turf booking ({fmtTime12(invoice.startTime)} - {fmtTime12(invoice.endTime)})</td>
                 <td className="p-2 text-right">{invoice.totalHours}</td>
-                <td className="p-2 text-right">{fmtINR(invoice.ratePerHour)}</td>
-                <td className="p-2 text-right">{fmtINR(invoice.subtotal)}</td>
+                <td className="p-2 text-right">{fmtINR((invoice.taxableValue || invoice.subtotal || 0) / (invoice.totalHours || 1))}</td>
+                <td className="p-2 text-right">{fmtINR(invoice.taxableValue || invoice.subtotal || 0)}</td>
               </tr>
             </tbody>
           </table>
           <div className="flex justify-end mt-4">
             <div className="w-72 text-sm space-y-1">
-              <div className="flex justify-between"><span>Subtotal</span><span>{fmtINR(invoice.subtotal)}</span></div>
+              <div className="flex justify-between"><span>Taxable Value</span><span>{fmtINR(invoice.taxableValue || invoice.subtotal || 0)}</span></div>
               {invoice.discount > 0 && <div className="flex justify-between"><span>Discount</span><span>-{fmtINR(invoice.discount)}</span></div>}
               <div className="flex justify-between"><span>CGST ({(invoice.gstRate/2).toFixed(1)}%)</span><span>{fmtINR(invoice.tax/2)}</span></div>
               <div className="flex justify-between"><span>SGST ({(invoice.gstRate/2).toFixed(1)}%)</span><span>{fmtINR(invoice.tax/2)}</span></div>
               <Separator />
-              <div className="flex justify-between text-base font-bold"><span>Grand Total</span><span>{fmtINR(invoice.totalAmount)}</span></div>
+              <div className="flex justify-between text-base font-bold"><span>Grand Total (incl. GST)</span><span>{fmtINR(invoice.totalAmount)}</span></div>
               <div className="flex justify-between text-emerald-700"><span>Paid</span><span>{fmtINR(invoice.paidAmount)}</span></div>
               <div className="flex justify-between text-rose-700 font-bold"><span>Balance Due</span><span>{fmtINR(invoice.balance)}</span></div>
             </div>
@@ -689,13 +896,109 @@ function InvoiceView({ invoice, company, payments, onClose }) {
   );
 }
 
+function InvoiceFormDialog({ open, onClose, sports, initial, onSaved }) {
+  const isEdit = !!initial;
+  const [form, setForm] = useState(() => initial || {
+    customerName:'', mobile:'', email:'', gstNumber:'',
+    sport: sports[0]?.name || 'Football',
+    bookingDate: todayStr(), startTime: '17:00', endTime: '18:00',
+    ratePerHour: sports[0]?.ratePerHour || 1200,
+    discount: 0, gstRate: 18,
+    paidAmount: 0, paymentMode: 'Cash',
+  });
+  useEffect(() => { if (initial) setForm(initial); }, [initial]);
+  const hours = (() => {
+    if (!form.startTime || !form.endTime) return 0;
+    const [sh, sm] = form.startTime.split(':').map(Number);
+    const [eh, em] = form.endTime.split(':').map(Number);
+    let mins = (eh*60+em) - (sh*60+sm); if (mins<0) mins += 24*60;
+    return +(mins/60).toFixed(2);
+  })();
+  const gross = hours * Number(form.ratePerHour||0);
+  const afterDiscount = Math.max(0, gross - Number(form.discount||0));
+  const tax = +(afterDiscount * Number(form.gstRate||0) / 100).toFixed(2);
+  const base = +(afterDiscount - tax).toFixed(2);
+  const total = afterDiscount;
+
+  async function save() {
+    const ne = validateName(form.customerName); if (ne) return toast.error(ne);
+    const me = validateMobile(form.mobile); if (me) return toast.error(me);
+    const ee = validateEmail(form.email, false); if (ee) return toast.error(ee);
+    try {
+      if (isEdit) {
+        await api(`/invoices/${initial.id}`, { method: 'PUT', body: JSON.stringify(form) });
+        toast.success('Invoice updated');
+      } else {
+        await api('/invoices', { method: 'POST', body: JSON.stringify({ ...form, advanceAmount: form.paidAmount }) });
+        toast.success('Invoice created');
+      }
+      onSaved();
+    } catch (e) { toast.error(e.message); }
+  }
+  return (
+    <Dialog open={open} onOpenChange={onClose}>
+      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader><DialogTitle>{isEdit ? `Edit Invoice ${initial.invoiceNumber}` : 'Create Invoice'}</DialogTitle></DialogHeader>
+        <div className="grid md:grid-cols-2 gap-4">
+          <div className="space-y-3">
+            <div><Label>Customer Name <span className="text-rose-500">*</span></Label><Input value={form.customerName} onChange={e => setForm({...form, customerName:e.target.value.replace(/[^A-Za-z\s.'-]/g, '')})} /></div>
+            <div className="grid grid-cols-2 gap-2">
+              <div><Label>Mobile <span className="text-rose-500">*</span></Label><Input value={form.mobile} onChange={e => setForm({...form, mobile:e.target.value.replace(/\D/g, '').slice(0,10)})} maxLength={10} inputMode="numeric"/></div>
+              <div><Label>Email <span className="text-muted-foreground text-xs">(opt)</span></Label><Input value={form.email||''} onChange={e => setForm({...form, email:e.target.value})} placeholder="name@gmail.com" /></div>
+            </div>
+            <div><Label>GSTIN (optional)</Label><Input value={form.gstNumber||''} onChange={e => setForm({...form, gstNumber:e.target.value})} /></div>
+            <div className="grid grid-cols-2 gap-2">
+              <div><Label>Sport</Label>
+                <Select value={form.sport} onValueChange={v => setForm({...form, sport:v})}>
+                  <SelectTrigger><SelectValue/></SelectTrigger>
+                  <SelectContent>{sports.map(s => <SelectItem key={s.id} value={s.name}>{s.name}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+              <div><Label>Date</Label><Input type="date" value={form.bookingDate} onChange={e => setForm({...form, bookingDate:e.target.value})} /></div>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div><Label>Start <span className="text-muted-foreground text-xs">({fmtTime12(form.startTime)})</span></Label><Input type="time" value={form.startTime} onChange={e => setForm({...form, startTime:e.target.value})} /></div>
+              <div><Label>End <span className="text-muted-foreground text-xs">({fmtTime12(form.endTime)})</span></Label><Input type="time" value={form.endTime} onChange={e => setForm({...form, endTime:e.target.value})} /></div>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              <div><Label>Rate/hr (incl)</Label><Input type="number" value={form.ratePerHour} onChange={e => setForm({...form, ratePerHour:e.target.value})} /></div>
+              <div><Label>Discount</Label><Input type="number" value={form.discount} onChange={e => setForm({...form, discount:e.target.value})} /></div>
+              <div><Label>GST %</Label><Input type="number" value={form.gstRate} onChange={e => setForm({...form, gstRate:e.target.value})} /></div>
+            </div>
+            {!isEdit && <div><Label>Initial Payment</Label><Input type="number" value={form.paidAmount} onChange={e => setForm({...form, paidAmount:e.target.value})} /></div>}
+          </div>
+          <Card>
+            <CardContent className="p-4 text-sm">
+              <div className="flex justify-between"><span>Hours</span><span className="font-medium">{hours} hr</span></div>
+              <div className="flex justify-between"><span>Gross</span><span>{fmtINR(gross)}</span></div>
+              <div className="flex justify-between"><span>Discount</span><span>-{fmtINR(form.discount)}</span></div>
+              <Separator className="my-1" />
+              <div className="flex justify-between text-muted-foreground"><span>Taxable Value</span><span>{fmtINR(base)}</span></div>
+              <div className="flex justify-between text-muted-foreground"><span>CGST ({(Number(form.gstRate)/2).toFixed(1)}%)</span><span>{fmtINR(tax/2)}</span></div>
+              <div className="flex justify-between text-muted-foreground"><span>SGST ({(Number(form.gstRate)/2).toFixed(1)}%)</span><span>{fmtINR(tax/2)}</span></div>
+              <Separator className="my-1" />
+              <div className="flex justify-between text-base font-bold"><span>Total</span><span>{fmtINR(total)}</span></div>
+              <Button onClick={save} className="w-full mt-3 bg-emerald-600 hover:bg-emerald-700">{isEdit ? 'Save Changes' : 'Create Invoice'}</Button>
+            </CardContent>
+          </Card>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function Invoices() {
   const [list, setList] = useState([]);
-  const [open, setOpen] = useState(null);
+  const [sports, setSports] = useState([]);
+  const [open, setOpen] = useState(null); // invoice detail view
   const [payOpen, setPayOpen] = useState(null);
   const [payForm, setPayForm] = useState({ amount: 0, mode: 'Cash', notes: '' });
+  const [formOpen, setFormOpen] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [query, setQuery] = useState('');
+
   const load = () => api('/invoices').then(setList);
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); api('/sports').then(setSports); }, []);
   async function openInv(id) { const d = await api(`/invoices/${id}`); setOpen(d); }
   async function recordPayment() {
     if (!payOpen) return;
@@ -706,32 +1009,65 @@ function Invoices() {
       load();
     } catch (e) { toast.error(e.message); }
   }
+  async function delInv(inv) {
+    if (!confirm(`Delete invoice ${inv.invoiceNumber}? This will also delete its booking and all payments.`)) return;
+    try { await api(`/invoices/${inv.id}`, { method: 'DELETE' }); toast.success('Invoice deleted'); load(); }
+    catch (e) { toast.error(e.message); }
+  }
+  const filtered = list.filter(i => {
+    if (!query) return true;
+    const q = query.toLowerCase();
+    return (i.invoiceNumber||'').toLowerCase().includes(q) || (i.customerName||'').toLowerCase().includes(q) || (i.mobile||'').includes(q);
+  });
   return (
     <div className="space-y-4">
-      <div><h1 className="text-2xl font-bold">Invoices</h1><p className="text-sm text-muted-foreground">All GST & non-GST invoices.</p></div>
-      <Card><CardContent className="p-0 overflow-x-auto">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div><h1 className="text-2xl font-bold">Invoices</h1><p className="text-sm text-muted-foreground">All GST & non-GST invoices · Admin can add, edit & delete.</p></div>
+        <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={() => { setEditing(null); setFormOpen(true); }}>
+          <Plus className="size-4 mr-1"/>New Invoice
+        </Button>
+      </div>
+      <Card>
+        <CardHeader className="flex flex-row items-center gap-3">
+          <div className="relative flex-1">
+            <Search className="size-4 absolute left-3 top-3 text-muted-foreground"/>
+            <Input className="pl-9" placeholder="Search invoice #, customer, mobile..." value={query} onChange={e => setQuery(e.target.value)} />
+          </div>
+        </CardHeader>
+        <CardContent className="p-0 overflow-x-auto">
         <Table>
-          <TableHeader><TableRow><TableHead>Invoice #</TableHead><TableHead>Date</TableHead><TableHead>Customer</TableHead><TableHead>Sport</TableHead><TableHead className="text-right">Total</TableHead><TableHead className="text-right">Paid</TableHead><TableHead className="text-right">Balance</TableHead><TableHead></TableHead></TableRow></TableHeader>
+          <TableHeader><TableRow><TableHead>Invoice #</TableHead><TableHead>Date</TableHead><TableHead>Customer</TableHead><TableHead>Sport</TableHead><TableHead>Time</TableHead><TableHead className="text-right">Total</TableHead><TableHead className="text-right">Paid</TableHead><TableHead className="text-right">Balance</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader>
           <TableBody>
-            {list.map(i => (
+            {filtered.length === 0 && <TableRow><TableCell colSpan={9} className="text-center text-muted-foreground py-8">No invoices yet. Click "New Invoice" or create a booking.</TableCell></TableRow>}
+            {filtered.map(i => (
               <TableRow key={i.id}>
                 <TableCell className="font-mono text-xs">{i.invoiceNumber}</TableCell>
                 <TableCell>{i.bookingDate}</TableCell>
-                <TableCell>{i.customerName}</TableCell>
+                <TableCell>
+                  <div className="font-medium">{i.customerName}</div>
+                  <div className="text-xs text-muted-foreground">{i.mobile}</div>
+                </TableCell>
                 <TableCell>{i.sport}</TableCell>
+                <TableCell className="text-xs">{fmtTime12(i.startTime)}–{fmtTime12(i.endTime)}</TableCell>
                 <TableCell className="text-right">{fmtINR(i.totalAmount)}</TableCell>
                 <TableCell className="text-right text-emerald-700">{fmtINR(i.paidAmount)}</TableCell>
                 <TableCell className="text-right text-rose-600 font-medium">{fmtINR(i.balance)}</TableCell>
-                <TableCell className="flex gap-1">
-                  <Button size="sm" variant="outline" onClick={() => openInv(i.id)}>View</Button>
-                  {i.balance > 0 && <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700" onClick={() => { setPayOpen(i); setPayForm({ amount: i.balance, mode: 'Cash', notes: '' }); }}>Record Payment</Button>}
+                <TableCell className="text-right">
+                  <div className="flex justify-end gap-1">
+                    <Button size="sm" variant="outline" onClick={() => openInv(i.id)}>View</Button>
+                    <Button size="sm" variant="outline" onClick={() => { setEditing(i); setFormOpen(true); }}>Edit</Button>
+                    {i.balance > 0 && <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700" onClick={() => { setPayOpen(i); setPayForm({ amount: i.balance, mode: 'Cash', notes: '' }); }}>Pay</Button>}
+                    <Button size="icon" variant="ghost" onClick={() => delInv(i)}><Trash2 className="size-4 text-rose-500"/></Button>
+                  </div>
                 </TableCell>
               </TableRow>
             ))}
           </TableBody>
         </Table>
-      </CardContent></Card>
+        </CardContent>
+      </Card>
       {open && <InvoiceView invoice={open.invoice} company={open.company} payments={open.payments} onClose={() => setOpen(null)} />}
+      <InvoiceFormDialog open={formOpen} onClose={() => { setFormOpen(false); setEditing(null); }} sports={sports} initial={editing} onSaved={() => { setFormOpen(false); setEditing(null); load(); }} />
       <Dialog open={!!payOpen} onOpenChange={() => setPayOpen(null)}>
         <DialogContent>
           <DialogHeader><DialogTitle>Record Payment · {payOpen?.invoiceNumber}</DialogTitle></DialogHeader>
@@ -912,6 +1248,11 @@ function Staff() {
   const load = () => api('/staff').then(setList);
   useEffect(() => { load(); }, []);
   async function save() {
+    const ne = validateName(form.name); if (ne) return toast.error(ne);
+    if (form.mobile) { const me = validateMobile(form.mobile); if (me) return toast.error(me); }
+    if (form.email) { const ee = validateEmail(form.email, false); if (ee) return toast.error(ee); }
+    if (!form.userId) return toast.error('User ID is required');
+    if (!form.password || form.password.length < 4) return toast.error('Password must be at least 4 characters');
     try { await api('/staff', { method: 'POST', body: JSON.stringify(form) });
       toast.success('Staff added'); setOpen(false); setForm({ userId:'', name:'', email:'', mobile:'', role:'Staff', password:'' }); load();
     } catch (e) { toast.error(e.message); }
@@ -926,12 +1267,12 @@ function Staff() {
             <DialogHeader><DialogTitle>New Staff</DialogTitle></DialogHeader>
             <div className="space-y-3">
               <div className="grid grid-cols-2 gap-2">
-                <div><Label>User ID</Label><Input value={form.userId} onChange={e => setForm({...form, userId:e.target.value})} /></div>
-                <div><Label>Name</Label><Input value={form.name} onChange={e => setForm({...form, name:e.target.value})} /></div>
+                <div><Label>User ID</Label><Input value={form.userId} onChange={e => setForm({...form, userId:e.target.value.replace(/\s+/g,'').toLowerCase()})} placeholder="e.g. mgr1"/></div>
+                <div><Label>Name</Label><Input value={form.name} onChange={e => setForm({...form, name:e.target.value.replace(/[^A-Za-z\s.'-]/g, '')})} /></div>
               </div>
               <div className="grid grid-cols-2 gap-2">
-                <div><Label>Email</Label><Input value={form.email} onChange={e => setForm({...form, email:e.target.value})} /></div>
-                <div><Label>Mobile</Label><Input value={form.mobile} onChange={e => setForm({...form, mobile:e.target.value})} /></div>
+                <div><Label>Email <span className="text-muted-foreground text-xs">(optional)</span></Label><Input value={form.email} onChange={e => setForm({...form, email:e.target.value})} placeholder="name@gmail.com" /></div>
+                <div><Label>Mobile</Label><Input value={form.mobile} onChange={e => setForm({...form, mobile:e.target.value.replace(/\D/g,'').slice(0,10)})} maxLength={10} inputMode="numeric"/></div>
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <div><Label>Role</Label>
