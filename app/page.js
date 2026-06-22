@@ -80,8 +80,8 @@ function api(path, opts = {}) {
 
 // ----------------- LOGIN PAGE -----------------
 function LoginPage({ onLogin }) {
-  const [userId, setUserId] = useState('admin');
-  const [password, setPassword] = useState('123');
+  const [userId, setUserId] = useState('');
+  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
 
   async function submit(e) {
@@ -100,51 +100,35 @@ function LoginPage({ onLogin }) {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-emerald-50 via-white to-emerald-100 p-4">
-      <div className="grid lg:grid-cols-2 gap-8 max-w-5xl w-full items-center">
-        <div className="hidden lg:block">
-          <div className="flex items-center gap-3 mb-6">
-            <img src={LOGO_URL} alt="Athletixcel" className="size-14 rounded-xl bg-white p-1 shadow-lg shadow-emerald-200 object-contain" />
+      <Card className="w-full max-w-md shadow-2xl border-emerald-100">
+        <CardHeader className="text-center space-y-3 pb-4">
+          <div className="mx-auto flex flex-col items-center gap-3">
+            <img src={LOGO_URL} alt="Athletixcel" className="size-20 rounded-2xl bg-white p-2 border shadow-md object-contain" />
             <div>
               <h1 className="text-3xl font-bold tracking-tight">NexTurf <span className="text-emerald-600">ERP</span></h1>
-              <p className="text-sm text-muted-foreground">by Athletixcel Sports Pvt Ltd</p>
+              <p className="text-sm text-muted-foreground mt-1">by Athletixcel Sports Pvt Ltd</p>
             </div>
           </div>
-          <h2 className="text-4xl font-bold leading-tight mb-4">Run your turf like a Fortune-500 sports facility.</h2>
-          <p className="text-muted-foreground mb-6">Bookings, billing, GST, accounting, coaching, tournaments, PlayO sync — all in one beautiful dashboard.</p>
-          <div className="grid grid-cols-2 gap-3 text-sm">
-            {['Calendar bookings','Auto GST invoices','Profit & Loss','PlayO + District sync','WhatsApp/Email','Role-based access'].map(x => (
-              <div key={x} className="flex items-center gap-2 p-3 rounded-lg bg-white/70 border">
-                <div className="size-2 rounded-full bg-emerald-500" />{x}
-              </div>
-            ))}
-          </div>
-        </div>
-        <Card className="shadow-2xl border-emerald-100">
-          <CardHeader>
-            <div className="lg:hidden flex items-center gap-2 mb-2">
-              <img src={LOGO_URL} alt="Athletixcel" className="size-10 rounded-lg bg-white p-0.5 border object-contain" />
-              <span className="font-bold text-xl">NexTurf ERP</span>
+          <Separator className="my-2" />
+          <CardTitle className="text-xl">Sign in to your account</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={submit} className="space-y-4">
+            <div>
+              <Label>User ID</Label>
+              <Input value={userId} onChange={e => setUserId(e.target.value)} placeholder="Enter your user ID" autoComplete="username" required />
             </div>
-            <CardTitle className="text-2xl">Sign in</CardTitle>
-            <CardDescription>Use <code className="text-emerald-600 font-medium">admin</code> / <code className="text-emerald-600 font-medium">123</code> for the first login.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={submit} className="space-y-4">
-              <div>
-                <Label>User ID</Label>
-                <Input value={userId} onChange={e => setUserId(e.target.value)} placeholder="admin" required />
-              </div>
-              <div>
-                <Label>Password</Label>
-                <Input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••" required />
-              </div>
-              <Button type="submit" className="w-full bg-emerald-600 hover:bg-emerald-700" disabled={loading}>
-                {loading ? 'Signing in...' : 'Sign in to NexTurf'}
-              </Button>
-            </form>
-          </CardContent>
-        </Card>
-      </div>
+            <div>
+              <Label>Password</Label>
+              <Input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Enter your password" autoComplete="current-password" required />
+            </div>
+            <Button type="submit" className="w-full bg-emerald-600 hover:bg-emerald-700 h-11" disabled={loading}>
+              {loading ? 'Signing in...' : 'Sign In'}
+            </Button>
+          </form>
+          <p className="text-center text-[11px] text-muted-foreground mt-6">© {new Date().getFullYear()} Athletixcel Sports Pvt Ltd. All rights reserved.</p>
+        </CardContent>
+      </Card>
     </div>
   );
 }
