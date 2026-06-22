@@ -108,6 +108,7 @@ async function handler(request, { params }) {
     const today = new Date(); today.setHours(0,0,0,0);
     const todayStr = today.toISOString().slice(0,10);
     const monthStart = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0,10);
+    const settings = await db.collection('settings').findOne({ key: 'company' });
     const bookings = await db.collection('bookings').find({}).toArray();
     const invoices = await db.collection('invoices').find({}).toArray();
     const payments = await db.collection('payments').find({}).toArray();
@@ -117,9 +118,14 @@ async function handler(request, { params }) {
     const monthsBookings = bookings.filter(b => b.bookingDate >= monthStart);
     const monthsRevenue = invoices.filter(i => i.bookingDate >= monthStart).reduce((s,i) => s + (i.totalAmount||0), 0);
     const outstanding = invoices.reduce((s,i) => s + ((i.totalAmount||0) - (i.paidAmount||0)), 0);
-    const cap = 48;
+    // Capacity = number of turfs × operating hours per day (configurable)
+    const numTurfs = Number(settings?.numTurfs) || 1;
+    const openHour = Number(settings?.openHour ?? 6);
+    const closeHour = Number(settings?.closeHour ?? 23);
+    const hoursPerDay = Math.max(0, closeHour - openHour);
+    const cap = numTurfs * hoursPerDay;
     const todayHours = todaysBookings.reduce((s,b) => s + (b.totalHours||0), 0);
-    const occupancy = Math.min(100, Math.round((todayHours / cap) * 100));
+    const occupancy = cap > 0 ? Math.min(100, Math.round((todayHours / cap) * 100)) : 0;
     const series = [];
     for (let i = 13; i >= 0; i--) {
       const d = new Date(today); d.setDate(d.getDate() - i);
@@ -149,6 +155,8 @@ async function handler(request, { params }) {
         monthsRevenue, monthsBookings: monthsBookings.length,
         outstanding, occupancy,
         availableSlots: Math.max(0, cap - todayHours),
+        dailyCapacity: cap,
+        numTurfs, openHour, closeHour,
       },
       series, sportData,
       paymentSplit: Object.entries(paymentSplit).map(([name,value]) => ({ name, value })),

@@ -171,8 +171,8 @@ function Dashboard() {
         <Kpi label="Monthly Revenue" value={fmtINR(k.monthsRevenue)} icon={TrendingUp} accent="violet" />
         <Kpi label="Monthly Bookings" value={k.monthsBookings} icon={ListChecks} accent="amber" />
         <Kpi label="Outstanding" value={fmtINR(k.outstanding)} icon={Wallet} accent="rose" />
-        <Kpi label="Occupancy" value={`${k.occupancy}%`} icon={Activity} accent="emerald" hint="Of 48 hrs/day capacity" />
-        <Kpi label="Available Slots" value={`${k.availableSlots} hrs`} icon={Clock} accent="sky" />
+        <Kpi label="Occupancy" value={`${k.occupancy}%`} icon={Activity} accent="emerald" hint={`Of ${k.dailyCapacity || 0} hrs/day capacity`} />
+        <Kpi label="Available Slots" value={`${k.availableSlots} hrs`} icon={Clock} accent="sky" hint="Bookable hours left today" />
         <Kpi label="Confirmed Today" value={k.todaysBookings} icon={CircleDollarSign} accent="teal" />
       </div>
       <div className="grid lg:grid-cols-3 gap-4">
@@ -1361,6 +1361,17 @@ function SettingsPage({ user }) {
             </div>
             <div><Label>Registered Address</Label><Textarea rows={2} value={s.registeredAddress||''} onChange={e => setS({...s, registeredAddress:e.target.value})} /></div>
             <div><Label>Turf Address</Label><Textarea rows={2} value={s.turfAddress||''} onChange={e => setS({...s, turfAddress:e.target.value})} /></div>
+            <Separator />
+            <div>
+              <h3 className="font-semibold text-sm mb-2 text-emerald-700">🏟️ Turf Capacity (used by Dashboard)</h3>
+              <p className="text-xs text-muted-foreground mb-2">Capacity = Number of turfs × Operating hours per day. This drives "Available Slots" & "Occupancy %" on the dashboard.</p>
+              <div className="grid md:grid-cols-3 gap-3">
+                <div><Label>Number of Turfs / Courts</Label><Input type="number" min={1} value={s.numTurfs ?? 1} onChange={e => setS({...s, numTurfs:Number(e.target.value)})} /></div>
+                <div><Label>Opening Time (hour, 0-23)</Label><Input type="number" min={0} max={23} value={s.openHour ?? 6} onChange={e => setS({...s, openHour:Number(e.target.value)})} placeholder="6 = 6 AM" /></div>
+                <div><Label>Closing Time (hour, 0-23)</Label><Input type="number" min={0} max={23} value={s.closeHour ?? 23} onChange={e => setS({...s, closeHour:Number(e.target.value)})} placeholder="23 = 11 PM" /></div>
+              </div>
+              <p className="text-xs mt-2"><span className="font-semibold">Daily capacity:</span> {(s.numTurfs||1)} turf × {(s.closeHour ?? 23) - (s.openHour ?? 6)} hrs = <span className="font-bold text-emerald-700">{(s.numTurfs||1) * Math.max(0,(s.closeHour ?? 23) - (s.openHour ?? 6))} booking-hours/day</span></p>
+            </div>
             <Button onClick={save} className="bg-emerald-600 hover:bg-emerald-700">Save Company</Button>
           </CardContent></Card>
         </TabsContent>
