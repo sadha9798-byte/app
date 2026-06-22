@@ -537,11 +537,13 @@ async function handler(request, { params }) {
     return json({ from, to, taxable, cgst, sgst, igst, totalTax, total, paidTax, pendingTax: totalTax - paidTax, count: invoices.length, invoices });
   }
 
-  // STAFF
+  // STAFF (Super Admin only for create/update/delete; Super Admin only for listing too)
   if (route === '/staff' && method === 'GET') {
+    if (auth.role !== 'Super Admin') return err('Only Super Admin can view staff', 403);
     return json(await db.collection('users').find({}, { projection: { password: 0 } }).toArray());
   }
   if (route === '/staff' && method === 'POST') {
+    if (auth.role !== 'Super Admin') return err('Only Super Admin can add staff', 403);
     const b = await request.json();
     if (await db.collection('users').findOne({ userId: b.userId })) return err('User ID already exists', 400);
     const doc = {
@@ -550,19 +552,27 @@ async function handler(request, { params }) {
       permissions: b.permissions || {}, createdAt: new Date().toISOString(),
     };
     await db.collection('users').insertOne(doc);
+    await audit(auth.userId, 'CREATE', 'staff', { id: doc.id, userId: doc.userId });
     const { password, ...rest } = doc;
     return json(rest);
   }
   if (route.startsWith('/staff/') && method === 'PUT') {
+    if (auth.role !== 'Super Admin') return err('Only Super Admin can edit staff', 403);
     const id = route.split('/')[2];
     const b = await request.json();
     const upd = { ...b }; delete upd.id;
     if (b.password) upd.password = hash(b.password); else delete upd.password;
     await db.collection('users').updateOne({ id }, { $set: upd });
+    await audit(auth.userId, 'UPDATE', 'staff', { id });
     return json({ ok: true });
   }
   if (route.startsWith('/staff/') && method === 'DELETE') {
-    await db.collection('users').deleteOne({ id: route.split('/')[2], userId: { $ne: 'admin' } });
+    if (auth.role !== 'Super Admin') return err('Only Super Admin can remove staff', 403);
+    const id = route.split('/')[2];
+    const target = await db.collection('users').findOne({ id });
+    if (target?.userId === 'admin') return err('Cannot delete the default Super Admin', 400);
+    await db.collection('users').deleteOne({ id, userId: { $ne: 'admin' } });
+    await audit(auth.userId, 'DELETE', 'staff', { id });
     return json({ ok: true });
   }
 

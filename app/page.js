@@ -1308,18 +1308,42 @@ function Staff() {
 function SettingsPage({ user }) {
   const [s, setS] = useState(null);
   const [pw, setPw] = useState({ oldPassword:'', newPassword:'' });
-  useEffect(() => { api('/settings').then(setS); }, []);
+  const isSuperAdmin = user.role === 'Super Admin';
+  useEffect(() => { if (isSuperAdmin) api('/settings').then(setS); else setS({}); }, [isSuperAdmin]);
   async function save() {
     await api('/settings', { method: 'PUT', body: JSON.stringify(s) });
     toast.success('Settings saved');
   }
   async function changePw() {
     if (!pw.oldPassword || !pw.newPassword) return toast.error('Enter both passwords');
+    if (pw.newPassword.length < 4) return toast.error('New password must be at least 4 characters');
     try { await api('/auth/change-password', { method: 'POST', body: JSON.stringify(pw) });
-      toast.success('Password changed'); setPw({ oldPassword:'', newPassword:'' });
+      toast.success('Password changed successfully');
+      setPw({ oldPassword:'', newPassword:'' });
     } catch (e) { toast.error(e.message); }
   }
   if (!s) return null;
+  // Non-Super-Admin: only show Security (My Account) tab
+  if (!isSuperAdmin) {
+    return (
+      <div className="space-y-4">
+        <div><h1 className="text-2xl font-bold">My Account</h1><p className="text-sm text-muted-foreground">Manage your password and account security.</p></div>
+        <Card className="max-w-md"><CardContent className="p-6 space-y-3">
+          <div className="flex items-center gap-3 pb-3 border-b mb-2">
+            <div className="size-12 rounded-full bg-emerald-100 text-emerald-700 grid place-items-center font-bold text-lg">{user.name?.[0]||'U'}</div>
+            <div>
+              <p className="font-semibold">{user.name}</p>
+              <p className="text-xs text-muted-foreground">{user.userId} · <Badge variant="outline">{user.role}</Badge></p>
+            </div>
+          </div>
+          <p className="text-sm font-medium text-emerald-700">Change Password</p>
+          <div><Label>Current Password</Label><Input type="password" value={pw.oldPassword} onChange={e => setPw({...pw, oldPassword:e.target.value})} placeholder="Enter your current password" /></div>
+          <div><Label>New Password</Label><Input type="password" value={pw.newPassword} onChange={e => setPw({...pw, newPassword:e.target.value})} placeholder="Enter your new password (min 4 chars)" /></div>
+          <Button onClick={changePw} className="bg-emerald-600 hover:bg-emerald-700 w-full"><KeyRound className="size-4 mr-1"/>Update Password</Button>
+        </CardContent></Card>
+      </div>
+    );
+  }
   return (
     <div className="space-y-4">
       <div><h1 className="text-2xl font-bold">Settings</h1><p className="text-sm text-muted-foreground">Company information, GST, invoicing & security.</p></div>
@@ -1414,13 +1438,17 @@ const NAV = [
   { key: 'payments', label: 'Payments', icon: Receipt },
   { key: 'expenses', label: 'Expenses', icon: Wallet },
   { key: 'reports', label: 'Reports & GST', icon: FileBarChart },
-  { key: 'staff', label: 'Staff & Roles', icon: Shield },
+  { key: 'staff', label: 'Staff & Roles', icon: Shield, superAdminOnly: true },
   { key: 'settings', label: 'Settings', icon: SettingsIcon },
 ];
 
 function Shell({ user, onLogout }) {
   const [tab, setTab] = useState('dashboard');
   const [open, setOpen] = useState(false);
+  const isSuperAdmin = user.role === 'Super Admin';
+  const visibleNav = NAV.filter(n => !n.superAdminOnly || isSuperAdmin);
+  // Guard: if non-Super-Admin somehow lands on staff tab, redirect to dashboard
+  useEffect(() => { if (tab === 'staff' && !isSuperAdmin) setTab('dashboard'); }, [tab, isSuperAdmin]);
   const NavItem = ({ k, label, Icon }) => (
     <button onClick={() => { setTab(k); setOpen(false); }} className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition ${tab===k ? 'bg-emerald-600 text-white shadow' : 'hover:bg-emerald-50 text-zinc-700'}`}>
       <Icon className="size-4" /> {label}
@@ -1440,7 +1468,7 @@ function Shell({ user, onLogout }) {
           </div>
         </div>
         <nav className="p-3 space-y-1 flex-1 overflow-y-auto">
-          {NAV.map(n => <NavItem key={n.key} k={n.key} label={n.label} Icon={n.icon} />)}
+          {visibleNav.map(n => <NavItem key={n.key} k={n.key} label={n.label} Icon={n.icon} />)}
         </nav>
         <div className="p-3 border-t">
           <div className="flex items-center gap-2 px-2 py-2 rounded-lg bg-zinc-50">
@@ -1471,7 +1499,7 @@ function Shell({ user, onLogout }) {
           {tab === 'payments' && <Payments />}
           {tab === 'expenses' && <Expenses />}
           {tab === 'reports' && <Reports />}
-          {tab === 'staff' && <Staff />}
+          {tab === 'staff' && isSuperAdmin && <Staff />}
           {tab === 'settings' && <SettingsPage user={user} />}
         </div>
       </main>
