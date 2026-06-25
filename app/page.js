@@ -65,6 +65,13 @@ function validateEmail(e, required = false) {
   if (!EMAIL_RE.test(e.trim())) return 'Email must start with a letter and be a valid address (e.g. name@gmail.com)';
   return null;
 }
+// Role check (reads from localStorage so all components can use it)
+function useIsSuperAdmin() {
+  try {
+    const u = JSON.parse(localStorage.getItem('nxt_user') || '{}');
+    return u.role === 'Super Admin';
+  } catch (e) { return false; }
+}
 
 // ----------------- API CLIENT -----------------
 function api(path, opts = {}) {
@@ -153,27 +160,197 @@ function Kpi({ label, value, icon: Icon, accent='emerald', hint }) {
   );
 }
 
+// ----------------- DOWNLOADS / BACKUP -----------------
+function downloadCSV(filename, rows) {
+  if (!rows || rows.length === 0) {
+    toast.message(`${filename}: no data to export`);
+    return;
+  }
+  const headers = Array.from(rows.reduce((set, r) => { Object.keys(r).forEach(k => set.add(k)); return set; }, new Set()));
+  const escape = (v) => {
+    if (v === null || v === undefined) return '';
+    let s = typeof v === 'object' ? JSON.stringify(v) : String(v);
+    if (s.includes('"') || s.includes(',') || s.includes('\n')) s = `"${s.replace(/"/g, '""')}"`;
+    return s;
+  };
+  const csv = [headers.join(','), ...rows.map(r => headers.map(h => escape(r[h])).join(','))].join('\n');
+  const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
+function Downloads() {
+  const [from, setFrom] = useState(todayStr());
+  const [to, setTo] = useState(todayStr());
+  const [data, setData] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  async function fetchData() {
+    setBusy(true);
+    try {
+      const d = await api(`/backup/data?from=${from}&to=${to}`);
+      setData(d);
+    } catch (e) { toast.error(e.message); } finally { setBusy(false); }
+  }
+  useEffect(() => { fetchData(); /* eslint-disable-next-line */ }, []);
+
+  function dl(kind) {
+    if (!data) return toast.error('Click "Refresh Data" first');
+    const stamp = `${from}_to_${to}`;
+    if (kind === 'bookings') {
+      const rows = data.bookings.map(b => ({
+        'Booking ID': b.bookingId, 'Date': b.bookingDate, 'Start': b.startTime, 'End': b.endTime,
+        'Hours': b.totalHours, 'Sport / Event': b.sport,
+        'Customer': b.customerName, 'Mobile': b.mobile, 'Email': b.email||'',
+        'GST No': b.gstNumber||'', 'LUT No': b.lutNumber||'',
+        'Rate/hr (incl GST)': b.ratePerHour, 'Discount': b.discount,
+        'Taxable Value': b.taxableValue, 'GST': b.tax, 'Total': b.totalAmount,
+        'Advance': b.advanceAmount, 'Balance': b.balanceAmount,
+        'Payment Status': b.paymentStatus, 'Booking Status': b.status,
+        'Source': b.source, 'Created By': b.createdBy, 'Created At': b.createdAt,
+      }));
+      downloadCSV(`Bookings_${stamp}.csv`, rows);
+    } else if (kind === 'invoices') {
+      const rows = data.invoices.map(i => ({
+        'Invoice #': i.invoiceNumber, 'Date': i.bookingDate,
+        'Customer': i.customerName, 'Mobile': i.mobile, 'Email': i.email||'',
+        'GST No': i.gstNumber||'', 'LUT No': i.lutNumber||'',
+        'Sport': i.sport, 'Hours': i.totalHours,
+        'Taxable Value': i.taxableValue, 'CGST': (i.tax||0)/2, 'SGST': (i.tax||0)/2,
+        'Total': i.totalAmount, 'Paid': i.paidAmount, 'Balance': i.balance,
+        'Status': i.status, 'Booking Ref': i.bookingRef,
+      }));
+      downloadCSV(`Invoices_${stamp}.csv`, rows);
+    } else if (kind === 'payments') {
+      const rows = data.payments.map(p => ({
+        'Date/Time': p.at?.replace('T',' ').slice(0,19),
+        'Invoice #': p.invoiceNumber, 'Customer': p.customerName,
+        'Amount': p.amount, 'Mode': p.mode, 'Notes': p.notes||'',
+        'Booking ID': p.bookingId, 'Created By': p.createdBy,
+      }));
+      downloadCSV(`Payments_${stamp}.csv`, rows);
+    } else if (kind === 'expenses') {
+      const rows = data.expenses.map(e => ({
+        'Date': e.date, 'Category': e.category, 'Vendor': e.vendor,
+        'Description': e.description, 'Amount': e.amount, 'Approved By': e.approvedBy, 'Created By': e.createdBy,
+      }));
+      downloadCSV(`Expenses_${stamp}.csv`, rows);
+    } else if (kind === 'customers') {
+      const rows = data.customers.map(c => ({
+        'Name': c.name, 'Mobile': c.mobile, 'Email': c.email||'',
+        'GST No': c.gstNumber||'', 'LUT No': c.lutNumber||'',
+        'Company': c.companyName||'', 'Address': c.address||'',
+        'Notes': c.notes||'', 'Created At': c.createdAt,
+      }));
+      downloadCSV(`Customers_${stamp}.csv`, rows);
+    } else if (kind === 'summary') {
+      downloadCSV(`Summary_${stamp}.csv`, [data.summary]);
+    } else if (kind === 'all') {
+      dl('summary');
+      setTimeout(() => dl('bookings'), 300);
+      setTimeout(() => dl('invoices'), 600);
+      setTimeout(() => dl('payments'), 900);
+      setTimeout(() => dl('expenses'), 1200);
+      setTimeout(() => dl('customers'), 1500);
+      toast.success('Downloading all reports...');
+    }
+  }
+
+  const s = data?.summary;
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h1 className="text-2xl font-bold">Downloads & Backup</h1>
+        <p className="text-sm text-muted-foreground">Export your data as CSV. Default range is today — change dates to export any period.</p>
+      </div>
+
+      <Card>
+        <CardContent className="p-4 flex flex-wrap items-end gap-3">
+          <div><Label>From</Label><Input type="date" value={from} onChange={e => setFrom(e.target.value)} /></div>
+          <div><Label>To</Label><Input type="date" value={to} onChange={e => setTo(e.target.value)} /></div>
+          <Button onClick={fetchData} disabled={busy} className="bg-emerald-600 hover:bg-emerald-700">
+            {busy ? 'Loading...' : 'Refresh Data'}
+          </Button>
+          <div className="flex-1"></div>
+          <Button onClick={() => { setFrom(todayStr()); setTo(todayStr()); }} variant="outline" size="sm">Today</Button>
+          <Button onClick={() => { const d=new Date(); const f=new Date(d.getFullYear(), d.getMonth(), 1); setFrom(f.toISOString().slice(0,10)); setTo(todayStr()); }} variant="outline" size="sm">This Month</Button>
+          <Button onClick={() => { const d=new Date(); setFrom(new Date(d.getFullYear(),0,1).toISOString().slice(0,10)); setTo(todayStr()); }} variant="outline" size="sm">This Year</Button>
+        </CardContent>
+      </Card>
+
+      {s && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <Kpi label="Revenue" value={fmtINR(s.totalRevenue)} icon={IndianRupee} accent="emerald" />
+          <Kpi label="Collected" value={fmtINR(s.totalCollected)} icon={Receipt} accent="blue" />
+          <Kpi label="Outstanding" value={fmtINR(s.totalOutstanding)} icon={Wallet} accent="rose" />
+          <Kpi label="Expenses" value={fmtINR(s.totalExpenses)} icon={CircleDollarSign} accent="amber" />
+          <Kpi label="Net Profit" value={fmtINR(s.netProfit)} icon={TrendingUp} accent={s.netProfit >= 0 ? 'emerald' : 'rose'} />
+          <Kpi label="GST Collected" value={fmtINR(s.totalTax)} icon={FileBarChart} accent="violet" />
+          <Kpi label="Bookings" value={s.totalBookings} icon={CalendarDays} accent="sky" />
+          <Kpi label="Customers" value={s.totalCustomers} icon={Users} accent="teal" />
+        </div>
+      )}
+
+      <Card>
+        <CardHeader>
+          <CardTitle>One-click downloads</CardTitle>
+          <CardDescription>Each button downloads a separate CSV file. Use "Download Everything" to grab all reports at once.</CardDescription>
+        </CardHeader>
+        <CardContent className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          <Button variant="outline" className="h-auto py-4 justify-start" onClick={() => dl('summary')}>
+            <div className="flex items-start gap-3"><FileBarChart className="size-5 text-emerald-700"/><div className="text-left"><div className="font-semibold">Summary Report</div><div className="text-xs text-muted-foreground">Revenue, Tax, Net Profit, KPIs</div></div></div>
+          </Button>
+          <Button variant="outline" className="h-auto py-4 justify-start" onClick={() => dl('bookings')}>
+            <div className="flex items-start gap-3"><CalendarDays className="size-5 text-emerald-700"/><div className="text-left"><div className="font-semibold">Bookings</div><div className="text-xs text-muted-foreground">{data?.bookings?.length || 0} entries with sport, hours, total</div></div></div>
+          </Button>
+          <Button variant="outline" className="h-auto py-4 justify-start" onClick={() => dl('invoices')}>
+            <div className="flex items-start gap-3"><FileText className="size-5 text-emerald-700"/><div className="text-left"><div className="font-semibold">Invoices (GST)</div><div className="text-xs text-muted-foreground">{data?.invoices?.length || 0} invoices with CGST/SGST breakdown</div></div></div>
+          </Button>
+          <Button variant="outline" className="h-auto py-4 justify-start" onClick={() => dl('payments')}>
+            <div className="flex items-start gap-3"><Receipt className="size-5 text-emerald-700"/><div className="text-left"><div className="font-semibold">Payments</div><div className="text-xs text-muted-foreground">{data?.payments?.length || 0} payments with mode</div></div></div>
+          </Button>
+          <Button variant="outline" className="h-auto py-4 justify-start" onClick={() => dl('expenses')}>
+            <div className="flex items-start gap-3"><Wallet className="size-5 text-emerald-700"/><div className="text-left"><div className="font-semibold">Expenses</div><div className="text-xs text-muted-foreground">{data?.expenses?.length || 0} expense entries</div></div></div>
+          </Button>
+          <Button variant="outline" className="h-auto py-4 justify-start" onClick={() => dl('customers')}>
+            <div className="flex items-start gap-3"><Users className="size-5 text-emerald-700"/><div className="text-left"><div className="font-semibold">Customers</div><div className="text-xs text-muted-foreground">All-time · {data?.customers?.length || 0} customers</div></div></div>
+          </Button>
+          <Button className="bg-emerald-600 hover:bg-emerald-700 h-auto py-4 sm:col-span-2 lg:col-span-3 justify-center text-base font-semibold" onClick={() => dl('all')}>
+            <Download className="size-5 mr-2"/>Download Everything ({from} to {to})
+          </Button>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 // ----------------- DASHBOARD -----------------
-function Dashboard() {
+function Dashboard({ user, onNavigate }) {
   const [data, setData] = useState(null);
   useEffect(() => { api('/dashboard').then(setData).catch(e => toast.error(e.message)); }, []);
   if (!data) return <div className="p-8 text-muted-foreground">Loading dashboard...</div>;
   const k = data.kpis;
+  const go = (tab) => onNavigate?.(tab);
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold">Dashboard</h1>
-        <p className="text-sm text-muted-foreground">Real-time overview of your turf operations.</p>
+        <p className="text-sm text-muted-foreground">Real-time overview of your turf operations. Click any card to drill down.</p>
       </div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Kpi label="Today's Revenue" value={fmtINR(k.todaysRevenue)} icon={IndianRupee} accent="emerald" />
-        <Kpi label="Today's Bookings" value={k.todaysBookings} icon={CalendarDays} accent="blue" />
-        <Kpi label="Monthly Revenue" value={fmtINR(k.monthsRevenue)} icon={TrendingUp} accent="violet" />
-        <Kpi label="Monthly Bookings" value={k.monthsBookings} icon={ListChecks} accent="amber" />
-        <Kpi label="Outstanding" value={fmtINR(k.outstanding)} icon={Wallet} accent="rose" />
-        <Kpi label="Occupancy" value={`${k.occupancy}%`} icon={Activity} accent="emerald" hint={`Of ${k.dailyCapacity || 0} hrs/day capacity`} />
-        <Kpi label="Available Slots" value={`${k.availableSlots} hrs`} icon={Clock} accent="sky" hint="Bookable hours left today" />
-        <Kpi label="Confirmed Today" value={k.todaysBookings} icon={CircleDollarSign} accent="teal" />
+        <div onClick={() => go('payments')} className="cursor-pointer transition hover:scale-[1.02] hover:shadow-md"><Kpi label="Today's Revenue" value={fmtINR(k.todaysRevenue)} icon={IndianRupee} accent="emerald" /></div>
+        <div onClick={() => go('bookings')} className="cursor-pointer transition hover:scale-[1.02] hover:shadow-md"><Kpi label="Today's Bookings" value={k.todaysBookings} icon={CalendarDays} accent="blue" /></div>
+        <div onClick={() => go('reports')} className="cursor-pointer transition hover:scale-[1.02] hover:shadow-md"><Kpi label="Monthly Revenue" value={fmtINR(k.monthsRevenue)} icon={TrendingUp} accent="violet" /></div>
+        <div onClick={() => go('bookings')} className="cursor-pointer transition hover:scale-[1.02] hover:shadow-md"><Kpi label="Monthly Bookings" value={k.monthsBookings} icon={ListChecks} accent="amber" /></div>
+        <div onClick={() => go('invoices')} className="cursor-pointer transition hover:scale-[1.02] hover:shadow-md"><Kpi label="Outstanding" value={fmtINR(k.outstanding)} icon={Wallet} accent="rose" /></div>
+        <div onClick={() => go('bookings')} className="cursor-pointer transition hover:scale-[1.02] hover:shadow-md"><Kpi label="Occupancy" value={`${k.occupancy}%`} icon={Activity} accent="emerald" hint={`Of ${k.dailyCapacity || 0} hrs/day capacity`} /></div>
+        <div onClick={() => go('bookings')} className="cursor-pointer transition hover:scale-[1.02] hover:shadow-md"><Kpi label="Available Slots" value={`${k.availableSlots} hrs`} icon={Clock} accent="sky" hint="Bookable hours left today" /></div>
+        <div onClick={() => go('customers')} className="cursor-pointer transition hover:scale-[1.02] hover:shadow-md"><Kpi label="Recent Customers" value={data.recentCustomers?.length || 0} icon={Users} accent="teal" hint="Click to view all" /></div>
       </div>
       <div className="grid lg:grid-cols-3 gap-4">
         <Card className="lg:col-span-2">
@@ -227,7 +404,7 @@ function Dashboard() {
             </ResponsiveContainer>
           </CardContent>
         </Card>
-        <Card className="lg:col-span-2">
+        <Card className="lg:col-span-2 cursor-pointer hover:shadow-md transition" onClick={() => go('bookings')}>
           <CardHeader><CardTitle>Upcoming Bookings</CardTitle></CardHeader>
           <CardContent>
             <Table>
@@ -451,6 +628,7 @@ function CalendarView({ bookings, onDayClick }) {
 }
 
 function Bookings() {
+  const isSuperAdmin = useIsSuperAdmin();
   const [list, setList] = useState([]);
   const [sports, setSports] = useState([]);
   const [open, setOpen] = useState(false);
@@ -611,9 +789,11 @@ function Bookings() {
                         <Button size="sm" variant="outline" className="text-emerald-700 border-emerald-300" onClick={() => openPaymentDialog(b)}>
                           <Wallet className="size-3.5 mr-1"/>{b.balanceAmount > 0 ? 'Update Payment' : 'View Payments'}
                         </Button>
-                        <Button size="icon" variant="ghost" onClick={() => deleteBooking(b)}>
-                          <Trash2 className="size-4 text-rose-500"/>
-                        </Button>
+                        {isSuperAdmin && (
+                          <Button size="icon" variant="ghost" onClick={() => deleteBooking(b)}>
+                            <Trash2 className="size-4 text-rose-500"/>
+                          </Button>
+                        )}
                       </div>
                     </TableCell>
                   </TableRow>
@@ -676,6 +856,7 @@ function Bookings() {
 }
 
 function PaymentRow({ payment, onUpdate, onDelete }) {
+  const isSuperAdmin = useIsSuperAdmin();
   const [edit, setEdit] = useState(false);
   const [form, setForm] = useState({ amount: payment.amount, mode: payment.mode, notes: payment.notes || '' });
   if (edit) {
@@ -709,7 +890,7 @@ function PaymentRow({ payment, onUpdate, onDelete }) {
         </div>
         <div className="flex gap-1">
           <Button size="sm" variant="outline" onClick={() => setEdit(true)}>Edit</Button>
-          <Button size="icon" variant="ghost" onClick={() => onDelete(payment.id)}><Trash2 className="size-4 text-rose-500"/></Button>
+          {isSuperAdmin && <Button size="icon" variant="ghost" onClick={() => onDelete(payment.id)}><Trash2 className="size-4 text-rose-500"/></Button>}
         </div>
       </CardContent>
     </Card>
@@ -995,6 +1176,7 @@ function InvoiceFormDialog({ open, onClose, sports, initial, onSaved }) {
 }
 
 function Invoices() {
+  const isSuperAdmin = useIsSuperAdmin();
   const [list, setList] = useState([]);
   const [sports, setSports] = useState([]);
   const [open, setOpen] = useState(null); // invoice detail view
@@ -1064,7 +1246,7 @@ function Invoices() {
                     <Button size="sm" variant="outline" onClick={() => openInv(i.id)}>View</Button>
                     <Button size="sm" variant="outline" onClick={() => { setEditing(i); setFormOpen(true); }}>Edit</Button>
                     {i.balance > 0 && <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700" onClick={() => { setPayOpen(i); setPayForm({ amount: i.balance, mode: 'Cash', notes: '' }); }}>Pay</Button>}
-                    <Button size="icon" variant="ghost" onClick={() => delInv(i)}><Trash2 className="size-4 text-rose-500"/></Button>
+                    {isSuperAdmin && <Button size="icon" variant="ghost" onClick={() => delInv(i)}><Trash2 className="size-4 text-rose-500"/></Button>}
                   </div>
                 </TableCell>
               </TableRow>
@@ -1118,6 +1300,7 @@ function Payments() {
 
 // ----------------- EXPENSES -----------------
 function Expenses() {
+  const isSuperAdmin = useIsSuperAdmin();
   const [list, setList] = useState([]);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ date: todayStr(), category: 'Electricity', vendor:'', description:'', amount: 0 });
@@ -1160,7 +1343,7 @@ function Expenses() {
       </div>
       <Card><CardContent className="p-0">
         <Table><TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Category</TableHead><TableHead>Vendor</TableHead><TableHead>Description</TableHead><TableHead className="text-right">Amount</TableHead><TableHead></TableHead></TableRow></TableHeader>
-          <TableBody>{list.map(e => <TableRow key={e.id}><TableCell>{e.date}</TableCell><TableCell><Badge variant="outline">{e.category}</Badge></TableCell><TableCell>{e.vendor}</TableCell><TableCell className="text-sm text-muted-foreground">{e.description}</TableCell><TableCell className="text-right text-rose-600">{fmtINR(e.amount)}</TableCell><TableCell><Button size="icon" variant="ghost" onClick={() => del(e.id)}><Trash2 className="size-4 text-rose-500"/></Button></TableCell></TableRow>)}</TableBody>
+          <TableBody>{list.map(e => <TableRow key={e.id}><TableCell>{e.date}</TableCell><TableCell><Badge variant="outline">{e.category}</Badge></TableCell><TableCell>{e.vendor}</TableCell><TableCell className="text-sm text-muted-foreground">{e.description}</TableCell><TableCell className="text-right text-rose-600">{fmtINR(e.amount)}</TableCell><TableCell>{isSuperAdmin && <Button size="icon" variant="ghost" onClick={() => del(e.id)}><Trash2 className="size-4 text-rose-500"/></Button>}</TableCell></TableRow>)}</TableBody>
         </Table>
       </CardContent></Card>
     </div>
@@ -1571,6 +1754,7 @@ const NAV = [
   { key: 'payments', label: 'Payments', icon: Receipt },
   { key: 'expenses', label: 'Expenses', icon: Wallet },
   { key: 'reports', label: 'Reports & GST', icon: FileBarChart },
+  { key: 'downloads', label: 'Downloads', icon: Download },
   { key: 'staff', label: 'Staff & Roles', icon: Shield, superAdminOnly: true },
   { key: 'settings', label: 'Settings', icon: SettingsIcon },
 ];
@@ -1625,13 +1809,14 @@ function Shell({ user, onLogout }) {
           <Badge variant="outline" className="hidden sm:inline-flex"><Building2 className="size-3 mr-1"/>Athletixcel Sports</Badge>
         </header>
         <div className="p-4 md:p-6 max-w-[1400px] mx-auto">
-          {tab === 'dashboard' && <Dashboard />}
+          {tab === 'dashboard' && <Dashboard user={user} onNavigate={setTab} />}
           {tab === 'bookings' && <Bookings />}
           {tab === 'customers' && <Customers />}
           {tab === 'invoices' && <Invoices />}
           {tab === 'payments' && <Payments />}
           {tab === 'expenses' && <Expenses />}
           {tab === 'reports' && <Reports />}
+          {tab === 'downloads' && <Downloads />}
           {tab === 'staff' && isSuperAdmin && <Staff />}
           {tab === 'settings' && <SettingsPage user={user} />}
         </div>

@@ -205,6 +205,7 @@ async function handler(request, { params }) {
     return json({ ok: true });
   }
   if (route.startsWith('/customers/') && method === 'DELETE') {
+    if (auth.role !== 'Super Admin') return err('Only Super Admin can delete customers', 403);
     const id = route.split('/')[2];
     await db.collection('customers').deleteOne({ id });
     return json({ ok: true });
@@ -319,6 +320,7 @@ async function handler(request, { params }) {
     return json({ ok: true });
   }
   if (route.startsWith('/bookings/') && method === 'DELETE') {
+    if (auth.role !== 'Super Admin') return err('Only Super Admin can delete bookings', 403);
     const id = route.split('/')[2];
     await db.collection('bookings').deleteOne({ id });
     // also delete linked invoices + payments
@@ -442,6 +444,7 @@ async function handler(request, { params }) {
     return json({ ok: true });
   }
   if (route.startsWith('/invoices/') && method === 'DELETE') {
+    if (auth.role !== 'Super Admin') return err('Only Super Admin can delete invoices', 403);
     const id = route.split('/')[2];
     const inv = await db.collection('invoices').findOne({ id });
     if (!inv) return err('Not found', 404);
@@ -485,6 +488,7 @@ async function handler(request, { params }) {
     return json({ ok: true });
   }
   if (route.startsWith('/payments/') && method === 'DELETE') {
+    if (auth.role !== 'Super Admin') return err('Only Super Admin can delete payments', 403);
     const id = route.split('/')[2];
     const existing = await db.collection('payments').findOne({ id });
     if (!existing) return err('Not found', 404);
@@ -510,6 +514,7 @@ async function handler(request, { params }) {
     return json(doc);
   }
   if (route.startsWith('/expenses/') && method === 'DELETE') {
+    if (auth.role !== 'Super Admin') return err('Only Super Admin can delete expenses', 403);
     await db.collection('expenses').deleteOne({ id: route.split('/')[2] });
     return json({ ok: true });
   }
@@ -596,6 +601,43 @@ async function handler(request, { params }) {
 
   if (route === '/audit-logs' && method === 'GET') {
     return json(await db.collection('audit_logs').find({}).sort({ at: -1 }).limit(200).toArray());
+  }
+
+  // BACKUP / DOWNLOAD DATA — accessible to all authenticated users
+  if (route === '/backup/data' && method === 'GET') {
+    const url = new URL(request.url);
+    const from = url.searchParams.get('from') || '1970-01-01';
+    const to = url.searchParams.get('to') || '2999-12-31';
+    const bookings = await db.collection('bookings').find({ bookingDate: { $gte: from, $lte: to } }).toArray();
+    const invoices = await db.collection('invoices').find({ bookingDate: { $gte: from, $lte: to } }).toArray();
+    const payments = await db.collection('payments').find({ at: { $gte: from + 'T00:00:00', $lte: to + 'T23:59:59' } }).toArray();
+    const expenses = await db.collection('expenses').find({ date: { $gte: from, $lte: to } }).toArray();
+    const customers = await db.collection('customers').find({}).toArray();
+    const settings = await db.collection('settings').findOne({ key: 'company' });
+    // summary
+    const revenue = invoices.reduce((s,i) => s + (i.totalAmount||0), 0);
+    const collected = payments.reduce((s,p) => s + (p.amount||0), 0);
+    const expense = expenses.reduce((s,e) => s + (e.amount||0), 0);
+    const tax = invoices.reduce((s,i) => s + (i.tax||0), 0);
+    const outstanding = invoices.reduce((s,i) => s + ((i.totalAmount||0) - (i.paidAmount||0)), 0);
+    const summary = {
+      period: `${from} to ${to}`,
+      generatedAt: new Date().toISOString(),
+      generatedBy: auth.userId,
+      totalBookings: bookings.length,
+      totalRevenue: revenue,
+      totalCollected: collected,
+      totalOutstanding: outstanding,
+      totalTax: tax,
+      totalExpenses: expense,
+      netProfit: revenue - expense,
+      totalInvoices: invoices.length,
+      totalPayments: payments.length,
+      totalCustomers: customers.length,
+      company: settings?.name || '',
+      brand: settings?.brand || '',
+    };
+    return json({ from, to, summary, bookings, invoices, payments, expenses, customers });
   }
   if (route === '/login-logs' && method === 'GET') {
     return json(await db.collection('login_logs').find({}).sort({ at: -1 }).limit(100).toArray());
