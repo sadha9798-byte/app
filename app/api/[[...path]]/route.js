@@ -113,7 +113,7 @@ async function handler(request, { params }) {
     const invoices = await db.collection('invoices').find({}).toArray();
     const payments = await db.collection('payments').find({}).toArray();
     const customers = await db.collection('customers').find({}).sort({ createdAt: -1 }).limit(5).toArray();
-    const todaysBookings = bookings.filter(b => b.bookingDate === todayStr);
+    const todaysBookings = bookings.filter(b => b.bookingDate === todayStr && b.status !== 'Cancelled');
     const todaysRevenue = invoices.filter(i => i.bookingDate === todayStr).reduce((s,i) => s + (i.totalAmount||0), 0);
     const monthsBookings = bookings.filter(b => b.bookingDate >= monthStart);
     const monthsRevenue = invoices.filter(i => i.bookingDate >= monthStart).reduce((s,i) => s + (i.totalAmount||0), 0);
@@ -294,6 +294,19 @@ async function handler(request, { params }) {
     const b = await request.json();
     const existing = await db.collection('bookings').findOne({ id });
     if (!existing) return err('Not found', 404);
+
+    // Cancelled bookings are locked - only refundStatus can be updated
+    if (existing.status === 'Cancelled') {
+      const keys = Object.keys(b).filter(k => k !== 'id');
+      const onlyRefund = keys.length === 1 && keys[0] === 'refundStatus';
+      if (!onlyRefund) return err('Cancelled booking is locked. Only refund status can be updated.', 400);
+      await db.collection('bookings').updateOne({ id }, { $set: { refundStatus: b.refundStatus } });
+      const inv0 = await db.collection('invoices').findOne({ bookingId: id });
+      if (inv0) await db.collection('invoices').updateOne({ id: inv0.id }, { $set: { refundStatus: b.refundStatus } });
+      await audit(auth.userId, 'UPDATE', 'bookings', { id, refundStatus: b.refundStatus });
+      return json({ ok: true });
+    }
+
     const totalHours = (b.startTime && b.endTime) ? computeHours(b.startTime, b.endTime) : existing.totalHours;
     const ratePerHour = b.ratePerHour ?? existing.ratePerHour;
     const discount = b.discount ?? existing.discount;
@@ -306,9 +319,19 @@ async function handler(request, { params }) {
       totalAmount: t.totalAmount, balanceAmount: t.balance,
     };
     delete update.id;
+
+    // Cancellation cascade
+    let invoiceCancel = null;
+    if (b.status === 'Cancelled' && existing.status !== 'Cancelled') {
+      const paid = existing.advanceAmount || 0;
+      update.refundStatus = paid > 0 ? 'Not Refunded' : 'No Payment Received';
+      update.cancelledAt = new Date().toISOString();
+      update.cancelledBy = auth.userId;
+      invoiceCancel = { status: 'Cancelled', refundStatus: update.refundStatus, cancelledAt: update.cancelledAt };
+    }
+
     await db.collection('bookings').updateOne({ id }, { $set: update });
-    // sync invoice
-    await db.collection('invoices').updateOne({ bookingId: id }, { $set: {
+    const invSync = {
       sport: update.sport ?? existing.sport,
       bookingDate: update.bookingDate ?? existing.bookingDate,
       startTime: update.startTime ?? existing.startTime,
@@ -316,7 +339,10 @@ async function handler(request, { params }) {
       totalHours, ratePerHour: Number(ratePerHour), discount: Number(discount), gstRate: Number(gstRate),
       gross: t.gross, taxableValue: t.taxable, subtotal: t.taxable, tax: t.tax,
       totalAmount: t.totalAmount, balance: t.totalAmount - (existing.advanceAmount||0),
-    }});
+    };
+    if (invoiceCancel) Object.assign(invSync, invoiceCancel);
+    await db.collection('invoices').updateOne({ bookingId: id }, { $set: invSync });
+    await audit(auth.userId, 'UPDATE', 'bookings', { id, status: update.status });
     return json({ ok: true });
   }
   if (route.startsWith('/bookings/') && method === 'DELETE') {
@@ -507,6 +533,7 @@ async function handler(request, { params }) {
     const doc = {
       id: uuid(), date: b.date, category: b.category, vendor: b.vendor || '',
       description: b.description || '', amount: Number(b.amount) || 0,
+      attachment: b.attachment || null,
       approvedBy: b.approvedBy || auth.userId, createdBy: auth.userId,
       createdAt: new Date().toISOString(),
     };
