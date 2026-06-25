@@ -940,6 +940,7 @@ function PaymentRow({ payment, onUpdate, onDelete }) {
 
 // ----------------- CUSTOMERS -----------------
 function Customers() {
+  const isSuperAdmin = useIsSuperAdmin();
   const [list, setList] = useState([]);
   const [selected, setSelected] = useState(null);
   const [open, setOpen] = useState(false);
@@ -958,6 +959,15 @@ function Customers() {
   }
   async function openDetail(id) {
     const d = await api(`/customers/${id}`); setSelected(d);
+  }
+  async function removeCustomer(c, e) {
+    e?.stopPropagation();
+    if (!confirm(`Remove ${c.name} (${c.mobile})?\n\nNote: Their past bookings and invoices will remain in the system for audit.`)) return;
+    try {
+      await api(`/customers/${c.id}`, { method: 'DELETE' });
+      toast.success('Customer removed');
+      load();
+    } catch (err) { toast.error(err.message); }
   }
   return (
     <div className="space-y-4">
@@ -986,7 +996,7 @@ function Customers() {
       <Card>
         <CardContent className="p-0">
           <Table>
-            <TableHeader><TableRow><TableHead>Name</TableHead><TableHead>Mobile</TableHead><TableHead>Email</TableHead><TableHead>Company</TableHead><TableHead>GST</TableHead><TableHead></TableHead></TableRow></TableHeader>
+            <TableHeader><TableRow><TableHead>Name</TableHead><TableHead>Mobile</TableHead><TableHead>Email</TableHead><TableHead>Company</TableHead><TableHead>GST</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader>
             <TableBody>
               {list.map(c => (
                 <TableRow key={c.id} className="cursor-pointer" onClick={() => openDetail(c.id)}>
@@ -995,7 +1005,16 @@ function Customers() {
                   <TableCell>{c.email||'-'}</TableCell>
                   <TableCell>{c.companyName||'-'}</TableCell>
                   <TableCell className="font-mono text-xs">{c.gstNumber||'-'}</TableCell>
-                  <TableCell><Button variant="ghost" size="sm">View</Button></TableCell>
+                  <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex justify-end gap-1">
+                      <Button variant="ghost" size="sm" onClick={() => openDetail(c.id)}>View</Button>
+                      {isSuperAdmin && (
+                        <Button size="icon" variant="ghost" onClick={(e) => removeCustomer(c, e)} title="Remove customer">
+                          <Trash2 className="size-4 text-rose-500"/>
+                        </Button>
+                      )}
+                    </div>
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
