@@ -698,6 +698,23 @@ function Bookings() {
       load();
     } catch (e) { toast.error(e.message); }
   }
+  async function changeStatus(b, newStatus) {
+    if (b.status === 'Cancelled') return toast.error('Cancelled booking is locked');
+    if (newStatus === 'Cancelled' && !confirm(`Cancel booking ${b.bookingId}? This will free the slot, mark invoice as cancelled, and lock further edits.`)) return;
+    try {
+      await api(`/bookings/${b.id}`, { method: 'PUT', body: JSON.stringify({ status: newStatus }) });
+      toast.success(newStatus === 'Cancelled' ? 'Booking cancelled · Slot freed · Invoice marked cancelled' : `Status updated to ${newStatus}`);
+      load();
+    } catch (e) { toast.error(e.message); }
+  }
+  async function toggleRefund(b) {
+    const next = b.refundStatus === 'Refunded' ? 'Not Refunded' : 'Refunded';
+    try {
+      await api(`/bookings/${b.id}`, { method: 'PUT', body: JSON.stringify({ refundStatus: next }) });
+      toast.success(`Marked as ${next}`);
+      load();
+    } catch (e) { toast.error(e.message); }
+  }
   async function deleteBooking(b) {
     if (!confirm(`Delete booking ${b.bookingId}? This will also delete its invoice and payments.`)) return;
     try {
@@ -764,31 +781,54 @@ function Bookings() {
                 <TableHead>Booking ID</TableHead><TableHead>Date</TableHead><TableHead>Time</TableHead>
                 <TableHead>Customer</TableHead><TableHead>Sport</TableHead><TableHead>Status</TableHead>
                 <TableHead>Payment</TableHead><TableHead className="text-right">Total</TableHead><TableHead className="text-right">Balance</TableHead>
+                {isSuperAdmin && <TableHead>Created By</TableHead>}
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow></TableHeader>
               <TableBody>
-                {filtered.length === 0 && <TableRow><TableCell colSpan={10} className="text-center text-muted-foreground py-6">No bookings found</TableCell></TableRow>}
-                {filtered.map(b => (
-                  <TableRow key={b.id}>
+                {filtered.length === 0 && <TableRow><TableCell colSpan={isSuperAdmin ? 11 : 10} className="text-center text-muted-foreground py-6">No bookings found</TableCell></TableRow>}
+                {filtered.map(b => {
+                  const isCancelled = b.status === 'Cancelled';
+                  return (
+                  <TableRow key={b.id} className={isCancelled ? 'line-through opacity-60 bg-rose-50/30' : ''}>
                     <TableCell className="font-mono text-xs">{b.bookingId}</TableCell>
                     <TableCell>{b.bookingDate}</TableCell>
-                    <TableCell>{fmtTime12(b.startTime)}–{fmtTime12(b.endTime)}</TableCell>
+                    <TableCell className="no-underline">{fmtTime12(b.startTime)}–{fmtTime12(b.endTime)}</TableCell>
                     <TableCell>
                       <div className="font-medium">{b.customerName}</div>
-                      <div className="text-xs text-muted-foreground">{b.mobile}</div>
+                      <div className="text-xs text-muted-foreground no-underline">{b.mobile}</div>
                     </TableCell>
                     <TableCell><Badge variant="outline" style={{borderColor: SPORT_COLOR[b.sport], color: SPORT_COLOR[b.sport]}}>{b.sport}</Badge></TableCell>
-                    <TableCell><Badge className={(STATUS_COLOR[b.status]||'') + ' border'}>{b.status}</Badge></TableCell>
-                    <TableCell>
-                      <Badge variant={b.paymentStatus === 'Paid' ? 'default' : b.paymentStatus === 'Partial' ? 'secondary' : 'destructive'}>{b.paymentStatus}</Badge>
+                    <TableCell className="no-underline">
+                      <Select value={b.status} onValueChange={(v) => changeStatus(b, v)} disabled={isCancelled}>
+                        <SelectTrigger className="h-7 text-xs w-[120px]"><SelectValue/></SelectTrigger>
+                        <SelectContent>{['Pending','Confirmed','Completed','Cancelled','Rescheduled'].map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
+                      </Select>
+                    </TableCell>
+                    <TableCell className="no-underline">
+                      {isCancelled ? (
+                        b.refundStatus === 'No Payment Received' ? (
+                          <Badge variant="outline" className="text-zinc-600 border-zinc-300">No payment received</Badge>
+                        ) : (
+                          <button onClick={() => toggleRefund(b)} className="cursor-pointer">
+                            <Badge className={b.refundStatus === 'Refunded' ? 'bg-emerald-500/15 text-emerald-700 border-emerald-300 border hover:bg-emerald-500/25' : 'bg-amber-500/15 text-amber-700 border-amber-300 border hover:bg-amber-500/25'}>
+                              {b.refundStatus || 'Not Refunded'} · Click to toggle
+                            </Badge>
+                          </button>
+                        )
+                      ) : (
+                        <Badge variant={b.paymentStatus === 'Paid' ? 'default' : b.paymentStatus === 'Partial' ? 'secondary' : 'destructive'}>{b.paymentStatus}</Badge>
+                      )}
                     </TableCell>
                     <TableCell className="text-right">{fmtINR(b.totalAmount)}</TableCell>
-                    <TableCell className="text-right text-rose-600 font-medium">{fmtINR(b.balanceAmount)}</TableCell>
-                    <TableCell className="text-right">
+                    <TableCell className="text-right text-rose-600 font-medium">{isCancelled ? '—' : fmtINR(b.balanceAmount)}</TableCell>
+                    {isSuperAdmin && <TableCell className="text-xs text-muted-foreground no-underline">{b.createdBy || '-'}</TableCell>}
+                    <TableCell className="text-right no-underline">
                       <div className="flex justify-end gap-1">
-                        <Button size="sm" variant="outline" className="text-emerald-700 border-emerald-300" onClick={() => openPaymentDialog(b)}>
-                          <Wallet className="size-3.5 mr-1"/>{b.balanceAmount > 0 ? 'Update Payment' : 'View Payments'}
-                        </Button>
+                        {!isCancelled && (
+                          <Button size="sm" variant="outline" className="text-emerald-700 border-emerald-300" onClick={() => openPaymentDialog(b)}>
+                            <Wallet className="size-3.5 mr-1"/>{b.balanceAmount > 0 ? 'Update Payment' : 'View Payments'}
+                          </Button>
+                        )}
                         {isSuperAdmin && (
                           <Button size="icon" variant="ghost" onClick={() => deleteBooking(b)}>
                             <Trash2 className="size-4 text-rose-500"/>
@@ -797,7 +837,8 @@ function Bookings() {
                       </div>
                     </TableCell>
                   </TableRow>
-                ))}
+                  );
+                })}
               </TableBody>
             </Table>
           </CardContent>
@@ -1225,32 +1266,36 @@ function Invoices() {
         </CardHeader>
         <CardContent className="p-0 overflow-x-auto">
         <Table>
-          <TableHeader><TableRow><TableHead>Invoice #</TableHead><TableHead>Date</TableHead><TableHead>Customer</TableHead><TableHead>Sport</TableHead><TableHead>Time</TableHead><TableHead className="text-right">Total</TableHead><TableHead className="text-right">Paid</TableHead><TableHead className="text-right">Balance</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader>
+          <TableHeader><TableRow><TableHead>Invoice #</TableHead><TableHead>Date</TableHead><TableHead>Customer</TableHead><TableHead>Sport</TableHead><TableHead>Time</TableHead><TableHead className="text-right">Total</TableHead><TableHead className="text-right">Paid</TableHead><TableHead className="text-right">Balance</TableHead>{isSuperAdmin && <TableHead>Created By</TableHead>}<TableHead className="text-right">Actions</TableHead></TableRow></TableHeader>
           <TableBody>
-            {filtered.length === 0 && <TableRow><TableCell colSpan={9} className="text-center text-muted-foreground py-8">No invoices yet. Click "New Invoice" or create a booking.</TableCell></TableRow>}
-            {filtered.map(i => (
-              <TableRow key={i.id}>
-                <TableCell className="font-mono text-xs">{i.invoiceNumber}</TableCell>
+            {filtered.length === 0 && <TableRow><TableCell colSpan={isSuperAdmin ? 10 : 9} className="text-center text-muted-foreground py-8">No invoices yet. Click "New Invoice" or create a booking.</TableCell></TableRow>}
+            {filtered.map(i => {
+              const isCancelled = i.status === 'Cancelled';
+              return (
+              <TableRow key={i.id} className={isCancelled ? 'line-through opacity-60 bg-rose-50/30' : ''}>
+                <TableCell className="font-mono text-xs">{i.invoiceNumber}{isCancelled && <span className="ml-1 text-rose-600 no-underline">(Cancelled)</span>}</TableCell>
                 <TableCell>{i.bookingDate}</TableCell>
                 <TableCell>
                   <div className="font-medium">{i.customerName}</div>
-                  <div className="text-xs text-muted-foreground">{i.mobile}</div>
+                  <div className="text-xs text-muted-foreground no-underline">{i.mobile}</div>
                 </TableCell>
                 <TableCell>{i.sport}</TableCell>
-                <TableCell className="text-xs">{fmtTime12(i.startTime)}–{fmtTime12(i.endTime)}</TableCell>
+                <TableCell className="text-xs no-underline">{fmtTime12(i.startTime)}–{fmtTime12(i.endTime)}</TableCell>
                 <TableCell className="text-right">{fmtINR(i.totalAmount)}</TableCell>
                 <TableCell className="text-right text-emerald-700">{fmtINR(i.paidAmount)}</TableCell>
-                <TableCell className="text-right text-rose-600 font-medium">{fmtINR(i.balance)}</TableCell>
-                <TableCell className="text-right">
+                <TableCell className="text-right text-rose-600 font-medium">{isCancelled ? '—' : fmtINR(i.balance)}</TableCell>
+                {isSuperAdmin && <TableCell className="text-xs text-muted-foreground no-underline">{i.createdBy || '-'}</TableCell>}
+                <TableCell className="text-right no-underline">
                   <div className="flex justify-end gap-1">
                     <Button size="sm" variant="outline" onClick={() => openInv(i.id)}>View</Button>
-                    <Button size="sm" variant="outline" onClick={() => { setEditing(i); setFormOpen(true); }}>Edit</Button>
-                    {i.balance > 0 && <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700" onClick={() => { setPayOpen(i); setPayForm({ amount: i.balance, mode: 'Cash', notes: '' }); }}>Pay</Button>}
+                    {!isCancelled && <Button size="sm" variant="outline" onClick={() => { setEditing(i); setFormOpen(true); }}>Edit</Button>}
+                    {!isCancelled && i.balance > 0 && <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700" onClick={() => { setPayOpen(i); setPayForm({ amount: i.balance, mode: 'Cash', notes: '' }); }}>Pay</Button>}
                     {isSuperAdmin && <Button size="icon" variant="ghost" onClick={() => delInv(i)}><Trash2 className="size-4 text-rose-500"/></Button>}
                   </div>
                 </TableCell>
               </TableRow>
-            ))}
+              );
+            })}
           </TableBody>
         </Table>
         </CardContent>
@@ -1278,20 +1323,90 @@ function Invoices() {
   );
 }
 
+// ----------------- DATE FILTER HOOK -----------------
+function useDateFilter(defaultRange = 'month') {
+  const today = todayStr();
+  const monthStart = (() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().slice(0,10); })();
+  const yearStart = (() => { const d = new Date(); return new Date(d.getFullYear(), 0, 1).toISOString().slice(0,10); })();
+  const init = defaultRange === 'today' ? [today, today] : defaultRange === 'year' ? [yearStart, today] : [monthStart, today];
+  const [from, setFrom] = useState(init[0]);
+  const [to, setTo] = useState(init[1]);
+  const [preset, setPreset] = useState(defaultRange);
+  function setRange(p) {
+    setPreset(p);
+    if (p === 'today') { setFrom(today); setTo(today); }
+    else if (p === 'month') { setFrom(monthStart); setTo(today); }
+    else if (p === 'year') { setFrom(yearStart); setTo(today); }
+  }
+  return { from, to, setFrom, setTo, preset, setPreset, setRange };
+}
+
+function DateFilterBar({ filter }) {
+  return (
+    <div className="flex flex-wrap gap-2 items-end">
+      <Button size="sm" variant={filter.preset==='today'?'default':'outline'} onClick={() => filter.setRange('today')} className={filter.preset==='today' ? 'bg-emerald-600 hover:bg-emerald-700' : ''}>Today</Button>
+      <Button size="sm" variant={filter.preset==='month'?'default':'outline'} onClick={() => filter.setRange('month')} className={filter.preset==='month' ? 'bg-emerald-600 hover:bg-emerald-700' : ''}>This Month</Button>
+      <Button size="sm" variant={filter.preset==='year'?'default':'outline'} onClick={() => filter.setRange('year')} className={filter.preset==='year' ? 'bg-emerald-600 hover:bg-emerald-700' : ''}>This Year</Button>
+      <div className="flex gap-1 items-center">
+        <Label className="text-xs">From</Label>
+        <Input type="date" className="h-8 w-36" value={filter.from} onChange={e => { filter.setFrom(e.target.value); filter.setPreset('custom'); }} />
+        <Label className="text-xs">To</Label>
+        <Input type="date" className="h-8 w-36" value={filter.to} onChange={e => { filter.setTo(e.target.value); filter.setPreset('custom'); }} />
+      </div>
+      <Badge variant="outline">{filter.from} → {filter.to}</Badge>
+    </div>
+  );
+}
+
 // ----------------- PAYMENTS -----------------
 function Payments() {
   const [list, setList] = useState([]);
+  const filter = useDateFilter('month');
   useEffect(() => { api('/payments').then(setList); }, []);
-  const total = list.reduce((s,p) => s + (p.amount||0), 0);
+  const filtered = list.filter(p => {
+    if (!p.at) return false;
+    const d = p.at.slice(0,10);
+    return d >= filter.from && d <= filter.to;
+  });
+  const total = filtered.reduce((s,p) => s + (p.amount||0), 0);
+  const totalAll = list.reduce((s,p) => s + (p.amount||0), 0);
+  const labelMap = { today: "Today's", month: "Monthly", year: "Yearly", custom: "Custom Range" };
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div><h1 className="text-2xl font-bold">Payments</h1><p className="text-sm text-muted-foreground">All collected payments.</p></div>
-        <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Total Collected</p><p className="text-2xl font-bold text-emerald-700">{fmtINR(total)}</p></CardContent></Card>
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+        <div><h1 className="text-2xl font-bold">Payments</h1><p className="text-sm text-muted-foreground">All collected payments. Defaults to current month.</p></div>
       </div>
+      <Card className="bg-gradient-to-r from-emerald-50 to-emerald-100/60 border-emerald-200">
+        <CardContent className="p-5 flex items-center justify-between flex-wrap gap-3">
+          <div>
+            <p className="text-xs uppercase tracking-wider text-emerald-800">Total {labelMap[filter.preset]} Collected</p>
+            <p className="text-3xl font-bold text-emerald-700 mt-1">{fmtINR(total)}</p>
+            <p className="text-xs text-emerald-700/70 mt-1">{filtered.length} payment(s) · {filter.from} to {filter.to}</p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">All-time Collected</p>
+            <p className="text-lg font-semibold">{fmtINR(totalAll)}</p>
+          </div>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardContent className="p-4"><DateFilterBar filter={filter}/></CardContent>
+      </Card>
       <Card><CardContent className="p-0">
-        <Table><TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Invoice</TableHead><TableHead>Customer</TableHead><TableHead>Mode</TableHead><TableHead className="text-right">Amount</TableHead></TableRow></TableHeader>
-          <TableBody>{list.map(p => <TableRow key={p.id}><TableCell>{p.at?.slice(0,16).replace('T',' ')}</TableCell><TableCell className="font-mono text-xs">{p.invoiceNumber}</TableCell><TableCell>{p.customerName}</TableCell><TableCell><Badge variant="outline">{p.mode}</Badge></TableCell><TableCell className="text-right font-medium text-emerald-700">{fmtINR(p.amount)}</TableCell></TableRow>)}</TableBody>
+        <Table><TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Invoice</TableHead><TableHead>Customer</TableHead><TableHead>Mode</TableHead><TableHead>Notes</TableHead><TableHead className="text-right">Amount</TableHead></TableRow></TableHeader>
+          <TableBody>
+            {filtered.length === 0 && <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">No payments in this period</TableCell></TableRow>}
+            {filtered.map(p => (
+              <TableRow key={p.id}>
+                <TableCell>{p.at?.slice(0,16).replace('T',' ')}</TableCell>
+                <TableCell className="font-mono text-xs">{p.invoiceNumber}</TableCell>
+                <TableCell>{p.customerName}</TableCell>
+                <TableCell><Badge variant="outline">{p.mode}</Badge></TableCell>
+                <TableCell className="text-xs text-muted-foreground">{p.notes||'-'}</TableCell>
+                <TableCell className="text-right font-medium text-emerald-700">{fmtINR(p.amount)}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
         </Table>
       </CardContent></Card>
     </div>
@@ -1303,49 +1418,143 @@ function Expenses() {
   const isSuperAdmin = useIsSuperAdmin();
   const [list, setList] = useState([]);
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ date: todayStr(), category: 'Electricity', vendor:'', description:'', amount: 0 });
+  const [form, setForm] = useState({ date: todayStr(), category: 'Electricity', vendor:'', description:'', amount: 0, attachment: null });
+  const [viewFile, setViewFile] = useState(null);
+  const filter = useDateFilter('month');
   const load = () => api('/expenses').then(setList);
   useEffect(() => { load(); }, []);
-  async function save() {
-    await api('/expenses', { method: 'POST', body: JSON.stringify(form) });
-    toast.success('Expense saved'); setOpen(false); load();
+
+  function onFileChange(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) { toast.error('File too large. Max 2 MB.'); e.target.value = ''; return; }
+    if (!['image/jpeg','image/jpg','image/png','application/pdf'].includes(file.type)) { toast.error('Only JPG, PNG or PDF allowed'); e.target.value = ''; return; }
+    const reader = new FileReader();
+    reader.onload = () => setForm(f => ({ ...f, attachment: { name: file.name, type: file.type, size: file.size, dataUrl: reader.result } }));
+    reader.readAsDataURL(file);
   }
-  async function del(id) { await api(`/expenses/${id}`, { method: 'DELETE' }); load(); }
-  const total = list.reduce((s,e) => s + (e.amount||0), 0);
+
+  async function save() {
+    if (!form.amount || Number(form.amount) <= 0) return toast.error('Enter a valid amount');
+    await api('/expenses', { method: 'POST', body: JSON.stringify(form) });
+    toast.success('Expense saved'); setOpen(false);
+    setForm({ date: todayStr(), category: 'Electricity', vendor:'', description:'', amount: 0, attachment: null });
+    load();
+  }
+  async function del(id) {
+    if (!confirm('Delete this expense?')) return;
+    await api(`/expenses/${id}`, { method: 'DELETE' });
+    load();
+  }
+
+  const filtered = list.filter(e => e.date >= filter.from && e.date <= filter.to);
+  const total = filtered.reduce((s,e) => s + (e.amount||0), 0);
+  const totalAll = list.reduce((s,e) => s + (e.amount||0), 0);
+  const labelMap = { today: "Today's", month: "Monthly", year: "Yearly", custom: "Custom Range" };
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <div><h1 className="text-2xl font-bold">Expenses</h1><p className="text-sm text-muted-foreground">Track all operational expenses.</p></div>
-        <div className="flex gap-3 items-center">
-          <Card><CardContent className="p-3 px-4"><p className="text-xs text-muted-foreground">Total Expenses</p><p className="text-lg font-bold text-rose-600">{fmtINR(total)}</p></CardContent></Card>
-          <Dialog open={open} onOpenChange={setOpen}>
-            <DialogTrigger asChild><Button className="bg-emerald-600 hover:bg-emerald-700"><Plus className="size-4 mr-1"/>New Expense</Button></DialogTrigger>
-            <DialogContent>
-              <DialogHeader><DialogTitle>New Expense</DialogTitle></DialogHeader>
-              <div className="space-y-3">
-                <div className="grid grid-cols-2 gap-2">
-                  <div><Label>Date</Label><Input type="date" value={form.date} onChange={e => setForm({...form,date:e.target.value})} /></div>
-                  <div><Label>Category</Label>
-                    <Select value={form.category} onValueChange={v => setForm({...form, category:v})}>
-                      <SelectTrigger><SelectValue/></SelectTrigger>
-                      <SelectContent>{['Electricity','Water','Salary','Rent','Maintenance','Equipment','Marketing','Miscellaneous'].map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
-                    </Select>
-                  </div>
+        <div><h1 className="text-2xl font-bold">Expenses</h1><p className="text-sm text-muted-foreground">Track operational expenses with receipts. Defaults to current month.</p></div>
+        <Dialog open={open} onOpenChange={setOpen}>
+          <DialogTrigger asChild><Button className="bg-emerald-600 hover:bg-emerald-700"><Plus className="size-4 mr-1"/>New Expense</Button></DialogTrigger>
+          <DialogContent>
+            <DialogHeader><DialogTitle>New Expense</DialogTitle></DialogHeader>
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-2">
+                <div><Label>Date</Label><Input type="date" value={form.date} onChange={e => setForm({...form,date:e.target.value})} /></div>
+                <div><Label>Category</Label>
+                  <Select value={form.category} onValueChange={v => setForm({...form, category:v})}>
+                    <SelectTrigger><SelectValue/></SelectTrigger>
+                    <SelectContent>{['Electricity','Water','Salary','Rent','Maintenance','Equipment','Marketing','Miscellaneous'].map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
+                  </Select>
                 </div>
-                <div><Label>Vendor</Label><Input value={form.vendor} onChange={e => setForm({...form, vendor:e.target.value})} /></div>
-                <div><Label>Description</Label><Textarea value={form.description} onChange={e => setForm({...form, description:e.target.value})} /></div>
-                <div><Label>Amount</Label><Input type="number" value={form.amount} onChange={e => setForm({...form, amount:e.target.value})} /></div>
               </div>
-              <DialogFooter><Button onClick={save} className="bg-emerald-600 hover:bg-emerald-700">Save</Button></DialogFooter>
-            </DialogContent>
-          </Dialog>
-        </div>
+              <div><Label>Vendor</Label><Input value={form.vendor} onChange={e => setForm({...form, vendor:e.target.value})} /></div>
+              <div><Label>Description</Label><Textarea value={form.description} onChange={e => setForm({...form, description:e.target.value})} /></div>
+              <div><Label>Amount</Label><Input type="number" value={form.amount} onChange={e => setForm({...form, amount:e.target.value})} /></div>
+              <div>
+                <Label>Attach Receipt <span className="text-muted-foreground text-xs">(optional · JPG/PNG/PDF · max 2 MB)</span></Label>
+                <Input type="file" accept="image/jpeg,image/png,application/pdf" onChange={onFileChange} />
+                {form.attachment && (
+                  <p className="text-xs text-emerald-700 mt-1">✓ Attached: {form.attachment.name} ({(form.attachment.size/1024).toFixed(0)} KB)</p>
+                )}
+              </div>
+            </div>
+            <DialogFooter><Button onClick={save} className="bg-emerald-600 hover:bg-emerald-700">Save</Button></DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
+
+      <Card className="bg-gradient-to-r from-rose-50 to-rose-100/60 border-rose-200">
+        <CardContent className="p-5 flex items-center justify-between flex-wrap gap-3">
+          <div>
+            <p className="text-xs uppercase tracking-wider text-rose-800">Total {labelMap[filter.preset]} Expenses</p>
+            <p className="text-3xl font-bold text-rose-600 mt-1">{fmtINR(total)}</p>
+            <p className="text-xs text-rose-700/70 mt-1">{filtered.length} entry/entries · {filter.from} to {filter.to}</p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">All-time Expenses</p>
+            <p className="text-lg font-semibold">{fmtINR(totalAll)}</p>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent className="p-4"><DateFilterBar filter={filter}/></CardContent>
+      </Card>
+
       <Card><CardContent className="p-0">
-        <Table><TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Category</TableHead><TableHead>Vendor</TableHead><TableHead>Description</TableHead><TableHead className="text-right">Amount</TableHead><TableHead></TableHead></TableRow></TableHeader>
-          <TableBody>{list.map(e => <TableRow key={e.id}><TableCell>{e.date}</TableCell><TableCell><Badge variant="outline">{e.category}</Badge></TableCell><TableCell>{e.vendor}</TableCell><TableCell className="text-sm text-muted-foreground">{e.description}</TableCell><TableCell className="text-right text-rose-600">{fmtINR(e.amount)}</TableCell><TableCell>{isSuperAdmin && <Button size="icon" variant="ghost" onClick={() => del(e.id)}><Trash2 className="size-4 text-rose-500"/></Button>}</TableCell></TableRow>)}</TableBody>
+        <Table><TableHeader><TableRow>
+          <TableHead>Date</TableHead><TableHead>Category</TableHead><TableHead>Vendor</TableHead>
+          <TableHead>Description</TableHead><TableHead>Receipt</TableHead>
+          {isSuperAdmin && <TableHead>Created By</TableHead>}
+          <TableHead className="text-right">Amount</TableHead><TableHead></TableHead>
+        </TableRow></TableHeader>
+          <TableBody>
+            {filtered.length === 0 && <TableRow><TableCell colSpan={isSuperAdmin ? 8 : 7} className="text-center text-muted-foreground py-8">No expenses in this period</TableCell></TableRow>}
+            {filtered.map(e => (
+              <TableRow key={e.id}>
+                <TableCell>{e.date}</TableCell>
+                <TableCell><Badge variant="outline">{e.category}</Badge></TableCell>
+                <TableCell>{e.vendor}</TableCell>
+                <TableCell className="text-sm text-muted-foreground">{e.description}</TableCell>
+                <TableCell>
+                  {e.attachment ? (
+                    <Button size="sm" variant="outline" className="h-7" onClick={() => setViewFile(e.attachment)}>📎 View</Button>
+                  ) : <span className="text-xs text-muted-foreground">—</span>}
+                </TableCell>
+                {isSuperAdmin && <TableCell className="text-xs text-muted-foreground">{e.createdBy || '-'}</TableCell>}
+                <TableCell className="text-right text-rose-600 font-medium">{fmtINR(e.amount)}</TableCell>
+                <TableCell>{isSuperAdmin && <Button size="icon" variant="ghost" onClick={() => del(e.id)}><Trash2 className="size-4 text-rose-500"/></Button>}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
         </Table>
       </CardContent></Card>
+
+      <Dialog open={!!viewFile} onOpenChange={() => setViewFile(null)}>
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+          {viewFile && (
+            <>
+              <DialogHeader>
+                <DialogTitle>Receipt · {viewFile.name}</DialogTitle>
+                <p className="text-xs text-muted-foreground">{(viewFile.size/1024).toFixed(0)} KB · {viewFile.type}</p>
+              </DialogHeader>
+              <div className="flex justify-center bg-zinc-50 rounded p-2">
+                {viewFile.type === 'application/pdf' ? (
+                  <iframe src={viewFile.dataUrl} className="w-full h-[70vh] border" title="receipt" />
+                ) : (
+                  <img src={viewFile.dataUrl} alt="receipt" className="max-h-[70vh] object-contain" />
+                )}
+              </div>
+              <DialogFooter>
+                <a href={viewFile.dataUrl} download={viewFile.name}><Button variant="outline"><Download className="size-4 mr-1"/>Download</Button></a>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
